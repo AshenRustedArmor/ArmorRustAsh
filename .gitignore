@@ -1,3 +1,13 @@
-#	Filestructure examples
-#TF-2-Armory\mods\TheAvaliEngineer.TAEsArmory\mod\scripts\archon_TitanFrameworkInit.nut
-Titanfall2\
+# ===== IDE and OS Trash =====
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# ===== Helpers =====
+*.lnk
+copy.bat
+
+# ===== Backups / Tempfiles =====
+*.bak
+*.tmp
+*.log
