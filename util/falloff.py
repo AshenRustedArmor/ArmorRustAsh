@@ -75,6 +75,19 @@ def solve_itp(fn, tgt, a, b, tol=1., k1=0.2, k2=2.0):
 		if (b - a) < 2 * tol: break
 	return (a + b) / 2
 
+def fmt_htk(dmg):
+	if dmg <= 0: return "inf"
+
+	htk = PILOT_HP / dmg
+	if htk < 9.95: return f"{htk:.1f}"[:3]
+	
+	base = int(htk)
+	frac = htk - base
+
+	if frac < 0.3: return f"{base:2d}+"
+	elif frac <= 0.7: return f"{base:2d}."
+	else: return f"{base+1:2d}-"
+
 # ===== Storage =====
 class WeaponFalloff:
 	def __init__(self, weapon_name):
@@ -284,7 +297,7 @@ class BallisticFalloff(FalloffCurve):
 		# Conversion
 		dist_m = dist_hu * CONST_HU_M
 		decay = (dist*CONST_HU_M) * self.bc / CONST_DRAG
-		vel = self.v0_ms * math.exp(-k * meters)
+		vel = self.v0_ms * math.exp(-decay * dist_m)
 
 		# Puncture factor
 		e_J = 0.5 * self.mass_kg * vel * vel
@@ -294,14 +307,7 @@ class BallisticFalloff(FalloffCurve):
 		return vel, pen
 
 	def damage_at(self, dist_hu, isHeavyArmor):
-		# Conversion
-		dist_m = dist_hu * CONST_HU_M
-		decay = (dist*CONST_HU_M) * self.bc / CONST_DRAG
-		vel = self.v0_ms * math.exp(-k * meters)
-
-		# Puncture factor
-		e_J = 0.5 * self.mass_kg * vel * vel
-		pen = e_J * self.sd
+		vel, pen = self._phys_at(dist_hu)
 		
 		# Armor calculation
 		armor = self.consts["arm_titan"] if isHeavyArmor else self.consts["arm_pilot"]
