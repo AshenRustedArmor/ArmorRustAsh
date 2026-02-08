@@ -75,7 +75,7 @@ def solve_itp(fn, tgt, a, b, tol=1., k1=0.2, k2=2.0):
 		if (b - a) < 2 * tol: break
 	return (a + b) / 2
 
-def fmt_htk(dmg):
+def htk_fmt(dmg):
 	if dmg <= 0: return "inf"
 
 	htk = PILOT_HP / dmg
@@ -88,12 +88,61 @@ def fmt_htk(dmg):
 	elif frac <= 0.7: return f"{base:2d}."
 	else: return f"{base+1:2d}-"
 
+def htk_range_text(wf, fc, dist_max=5000, dist_inc=100):
+	"""
+	Builds the range meter notation for weapon keyvars.
+	"""
+	
+	def htk_range_bar():
+		dist_ct = int(dist_max/dist_inc) + 1
+		
+		bufferP = list("-"*dist_ct)
+		bufferT = bufferP
+
+		#	Sample range
+		#dist_rng = np.arange(dist_max, step=dist_inc)
+		#dmgP = fnDmgP(dist_rng); dmgT = fnDmgT(dist_rng)
+	
+		for d in [ 0,
+			wf.default["damage_near_distance"],
+			wf.default["damage_far_distance"],
+			wf.default["damage_very_far_distance"]
+		]:
+			idx = int(d/dist_inc)
+
+			defP = fc.damage_lerp(d, False)
+			strDefP = htk_fmt(defP)
+			defT = fc.damage_lerp(d, True)
+			strDefT = htk_fmt(defT)
+
+		for d in [ 0,
+			wf.modded["damage_near_distance"],
+			wf.modded["damage_far_distance"],
+			wf.modded["damage_very_far_distance"]
+		]:
+			idx = int(d/dist_inc)
+
+			dmgP = fc.damage_at(d, False)
+			strDmgP = htk_fmt(dmgP)
+			dmgT = fc.damage_at(d, True)
+			strDmgT = htk_fmt(dmgT)
+
+		pass
+	
+	# Header section
+	header = []
+	header.append(f"//\t\t{wf.name}")
+	header.append(f"//\tCOMMENTS 1")
+	header.append(f"//\tCOMMENTS 2")
+
+	pass
+
 # ===== Storage =====
 class WeaponFalloff:
 	def __init__(self, weapon_name):
 		self.name = weapon_name
 
-		self.data = {
+		self.default = {
 			"damage_near_value": 				0,
 			"damage_far_value": 				0,
 			"damage_very_far_value": 			0,
@@ -108,8 +157,7 @@ class WeaponFalloff:
 
 			"red_crosshair_range":				0
 		}
-		self.modified = {}
-		self.has_mod = False
+		self.modded = {}
 
 	def fetch(self):
 		"""
@@ -138,7 +186,7 @@ class WeaponFalloff:
 		clean = re.sub(r'//.*', '', keyvars)
 
 		# Parse
-		for key in self.data.keys():
+		for key in self.default.keys():
 			pattern = f'"{key}"\s*"([^"]+)"'
 			matched = re.search(pattern, clean)
 
@@ -146,25 +194,25 @@ class WeaponFalloff:
 
 			val_raw = matched.group(1)
 			try:
-				self.data[key] = float(raw_val)
+				self.default[key] = float(raw_val)
 			except ValueError:
-				self.data[key] = val_raw
+				self.default[key] = val_raw
 
 class FalloffCurve:
 	def __init__(self, name):
 		self.name = name
+		self.config = {
+			"dist_near": 	0.90,
+			"dist_far":		0.60, 
+			"dist_vfar":	0.25,
 
-		self.thresholds = {
-			"near":	0.90, 
-			"far":	0.60, 
-			"vfar":	0.25
-		}
-
-		self.consts = {
 			"dmg_scale":	1.0,
 			"dmg_pilot":	1.0,
 			"dmg_titan":	1.5,
 		}
+
+	def get(name):
+		return self.config[name]
 
 	#	Overridden in child class
 	def calibrate(self, data):
@@ -172,6 +220,29 @@ class FalloffCurve:
 
 	def damage_at(self, dist_hu, isHeavyArmor):
 		return 0.
+
+	def damage_lerp(self, dist_hu, isHeavyArmor, isModded):
+		# interpolation consts
+		strA = "damage_near_"
+		strB = "damage_far_"
+
+		consts = self.modded if isModded else self.default
+
+		if dist_hu >= consts["damage_far_distance"]:
+			strA = "damage_far_"
+			strB = "damage_very_far_"
+
+		distA = consts[strA + "distance"]
+		distB = consts[strB + "distance"]
+		
+		dmgDist = dist_hu - distA
+		t = dmgDist / (distB - distA)
+        
+		# get damage
+		dmgA = strA + "value" + ("_titanarmor" if isHeavyArmor else "")
+		dmgB = strB + "value" + ("_titanarmor" if isHeavyArmor else "")
+
+		return lerp(dmgA, dmgB, t)
 
 	# Constant
 	def apply(self, data, isHeavyArmor):
@@ -229,7 +300,7 @@ class BallisticFalloff(FalloffCurve):
 		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2
 
 		#	Scaling
-		self.consts = {
+		self.config = {
 			"dmg_scale":	DMG_PEN,
 			"dmg_pilot":	DMG_PILOT,
 			"dmg_titan":	DMG_TITAN,
@@ -237,6 +308,11 @@ class BallisticFalloff(FalloffCurve):
 			"arm_const":	ARM_HFVEL,
 			"arm_pilot":	ARM_PILOT,
 			"arm_titan":	ARM_TITAN,
+
+			"cfg_mass_kg":	mass_gr * CONST_GR_G * 0.001,
+			"cfg_caliber":	cal_mm,
+			"cfg_bc":		bc,
+			"cfg_v0_ms":	vel_fps*CONST_FT_M,
 		}
 
 	def calibrate(self, wpn):
@@ -317,3 +393,45 @@ class BallisticFalloff(FalloffCurve):
 		# Damage
 		damage = pen/DMG_PEN * dr
 		return max(1., int(damage))
+
+# ===== Plotting utils =====
+class FalloffGUI:
+	def __init__(self, wf, fc):
+		self.wf = wf; self.fc = fc
+
+		self.fig, (self.ax_p, self.ax_t) = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
+		plt.subplots_adjust(right=0.7, hspace=0.3)
+
+	def graph_init(dist_max = 5000):
+		#	Damage functions
+		fnPhysP = np.vectorize(lambda d: self.fc.damage_at(d, False))
+		fnPhysT = np.vectorize(lambda d: self.fc.damage_at(d, True))
+
+		fnIntrP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, False))
+		fnIntrT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, False))
+		
+		fnGameP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, True))
+		fnGameT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, True))
+
+		#	sample
+		dists = np.arange(dist_max)
+
+
+
+		pass
+
+
+
+def falloff_tinker(wf, fc, dist_max=5000):
+	
+
+	#	Vectorize functions
+
+	#	Plot
+	fig, ax = plt.subplots()
+	plt.subplots_adjust(bottom=0.25)
+
+	slider_
+
+
+	pass
