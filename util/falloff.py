@@ -61,8 +61,10 @@ def solve_itp(fn, tgt, a, b, tol=1., k1=0.2, k2=2.0):
 
 		# Vectorized update of a and b
 		side = y_itp * y_a > 0
+
 		a = np.where(side, x_itp, a)
 		y_a = np.where(side, y_itp, y_a)
+		
 		b = np.where(~side, x_itp, b)
 		y_b = np.where(~side, y_itp, y_b)
 
@@ -302,22 +304,36 @@ DRAG_TABLES = {
 	"G7": np.array([[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],
 					[0.1, 0.1, 0.1, 0.2, 0.3, 0.2, 0.1]]),
 }
-
-
-
-
 class BallisticFalloff(FalloffCurve):
-	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm, len=2.0, twist=10, model="G1"):
+	def __init__(self, params):
+		"""
+		Create a ballistic model.
+
+		params: {
+			"name":    str, 
+			"model":   str (Ballistic drag model)
+
+			"mass_gr": float (Bullet mass in grains), 
+			"v0_fps":  float (Initial velocity in fps), 
+			"bc_kgm2": float (Ballistic coefficient in kg/m^2),
+
+			"cal_mm":  float (Bullet diameter),
+		} """
+		#	Table retrieval
+		name = params.get("name", "unknown")
+		self.model = params.get("model", "G1")
+		
+		mass_kg = params["mass_gr"] * CONST_GR_G * 0.001
+		v0_ms = params["v0_fps"] * CONST_FT_M
+
+		bc_kgm2 = params["bc_kgm2"]
+		cal_mm = params["cal_mm"]
+
+		# Sectional density in lbm / sq in
+		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2
+
+		#	Superclass
 		super().__init__(name)
-
-		#	Models
-		self.model = model
-
-		#	Bullet parameters
-		mass_kg = mass_gr * CONST_GR_G * 0.001
-		v0_ms = vel_fps*CONST_FT_M
-		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2			# Sectional density in lbm / sq in
-
 		self.config.update({
 			# Name			Default		Tune?	Min		Max
 			"arm_const":	(ARM_HFVEL,	True,	10.0,	1e3  ),
@@ -356,16 +372,14 @@ class BallisticFalloff(FalloffCurve):
 		#	Final
 		# Velocity
 		v1 = v0 / (1.0 + v0 * k0 * dist_m)
-		#v1_fps = v1 / CONST_FT_M
 
 		# Penetration
-		#dmg_mult = 1.0 + self.get("tumble_dmg") * s1
 		pen = (0.5*m*v1*v1) * self.sd #* dmg_mult
 
 		# Return phys
 		return vel, pen
 
-	def _dmg_scale(self, dist_hu, v_ms, pen):
+	def _dmg_scale(self, dist_hu, v_ms, pen, isHeavyArmor):
 		return pen
 
 	def damage_at(self, dist_hu, isHeavyArmor):
@@ -382,13 +396,13 @@ class BallisticFalloff(FalloffCurve):
 		return np.maximum(1., int(damage))
 
 class RifleFalloff(BallisticFalloff):
-	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm, len=2.0, twist=10, model="G1"):
-		super().__init__(name, mass_gr, vel_fps, bc, cal_mm, model)
+	def __init__(self, params, len_cal=2.0, twist=10, tumble=1.5):
+		super().__init__(params)
 		self.config.update({
 			# Name		Default		Tune?	Min		Max
-			"len_cal":	(len,		True,	1.0,	5.5	 ),
+			"len_cal":	(len_cal,	True,	1.0,	5.5	 ),
 			"twist":	(twist,		True,	7.0,	24.0 ),
-			"tumble":	(0.5,		True,	0.0,	4.0  ),
+			"tumble":	(tumble,	True,	0.0,	4.0  ),
 		})
 	
 	def _stability(self, v_ms):
@@ -404,66 +418,152 @@ class RifleFalloff(BallisticFalloff):
 
 	def _drag(self, v_ms):
 		cd_base = super()._drag(v_ms)
-
-		stable = self._stability(v_ms)
+		stable = self._stability(vel_ms)
 		return cd_base * (1.0 + stable*3.0)
 
-	def _dmg_scale(self, dist_hu, vel_ms, pen):
-		# Add Tumble Damage Buff
-		stable = self._calc_stability(vel_ms)
+	def _dmg_scale(self, dist_hu, vel_ms, pen, isHeavyArmor):
+		stable = self._stability(vel_ms)
 		mult = 1.0 + stable*(self.get("tumble") - 1.0)
 		return pen * mult
 
 class ShotgunFalloff(BallisticFalloff):
-	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm, len=2.0, twist=10, model="G1"):
-		super().__init__(name, mass_gr, vel_fps, bc, cal_mm, model)
+	def __init__(self, params, pellets, spread):
+		super().__init__(params)
 		self.config.update({
 			# Name		Default		Tune?	Min		Max
-			"len_cal":	(len,		True,	1.0,	5.5	 ),
-			"twist":	(twist,		True,	7.0,	24.0 ),
-			"tumble":	(0.5,		True,	0.0,	4.0  ),
+			"pellets":	(pellets,	False,	1,		50	),
+			"spread":	(spread,	True, 	0.1,	15.0),
+			"sz_pilot":	(0.5,		False,	0.3,	1.0	),
+			"sz_titan":	(3.5,		False,	2.0,	6.0	),
 		})
-	pass
+	
+	def _dmg_scale(self, dist_hu, vel_ms, pen, isHeavyArmor):
+		dist_m = np.maximum(dist_hu * CONST_HU_M, 0.1)
 
+		sz_tgt = self.get("sz_titan") if isHeavyArmor else self.get("sz_pilot")
+		r_tgt  = sz_tgt / 2.0
+
+		spread = dist_safe * np.tan(np.radians(self.get("spread")))
+		prob_hit = np.clip(np.pow(sz_tgt/spread, 2), 0.0, 1.0)
+
+		return pen * self.get("pellets") * hit_prob
 
 # ===== Plotting utils =====
 class FalloffGUI:
 	def __init__(self, wf, fc):
-		self.wf = wf; self.fc = fc
+		self.wf = wf; self.fc = fc; self.sliders = []
 
+		#	Figure, subplots
 		self.fig, (self.ax_p, self.ax_t) = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
 		plt.subplots_adjust(right=0.7, hspace=0.3)
 
-	def graph_init(dist_max = 5000):
-		#	Damage functions
-		fnPhysP = np.vectorize(lambda d: self.fc.damage_at(d, False))
-		fnPhysT = np.vectorize(lambda d: self.fc.damage_at(d, True))
+		#	Data
+		self.dists = np.linspace(0, dist_max, dist_ct)
 
-		fnIntrP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, False))
-		fnIntrT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, False))
+		#	Functions
+		self._funcs()
+		self._graph()
+		self._controls()
+
+		plt.show()
+
+	def _funcs(self):
+		self.fnPhysP = np.vectorize(lambda d: self.fc.damage_at(d, False))
+		self.fnIntrP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, False))
+		self.fnGameP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, True))
+
+		self.fnPhysT = np.vectorize(lambda d: self.fc.damage_at(d, True))
+		self.fnIntrT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, False))
+		self.fnGameT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, True))
+
+	def _graph(self, dist_max = 5000, dist_ct = 200):
+		#	Plot
+		# Titles/labels/legend
+		self.ax_p.clear()
+		self.ax_t.clear()
+
+		self.ax_p.set_title(f"{self.wf.name}: Pilot")
+		self.ax_t.set_title(f"{self.wf.name}: Titan")
+
+		self.ax_p.set_ylabel("Damage")
+		self.ax_t.set_ylabel("Damage")
+		self.ax_t.set_xlabel("Distance (hu)")
+
+		self.ax_p.grid(True, alpha=0.25)
+		self.ax_t.grid(True, alpha=0.25)
+
+		# Plot
+		self.axPhysP = self.ax_p.plot(self.dists, self.fnPhysP(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
+		self.axPhysT = self.ax_t.plot(self.dists, self.fnPhysT(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
+
+		self.axIntrP = self.ax_p.plot(self.dists, self.fnIntrP(self.dists), '--', color='orange', alpha=0.6, label='Interpolated')
+		self.axIntrT = self.ax_t.plot(self.dists, self.fnIntrT(self.dists), '--', color='cyan', alpha=0.6, label='Interpolated')
+
+		self.axGameT = self.ax_p.plot(self.dists, self.fnGameP(self.dists), '-', color='red', alpha=0.8, label='Vanilla')
+		self.axGameT = self.ax_t.plot(self.dists, self.fnGameT(self.dists), '-', color='blue', alpha=0.8, label='Vanilla')
 		
-		fnGameP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, True))
-		fnGameT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, True))
+		self.ax_p.legend()
+		self.ax_t.legend()
 
-		#	sample
-		dists = np.arange(dist_max)
+	def _controls(self):
+		# Identify tunable parameters
+		params = [k for k, v in self.fc.config.items() if v[1]]
 
+		# Formatting
+		ax_color = 'lightgoldenrodyellow'
+		start_y = 0.85
+		spacing = 0.04
 
+		# Print button
+		ax_btn = plt.axes([0.70, 
+			start_y - (len(tunables) * spacing) - 0.05, 
+			0.1,
+			0.04
+		])
+		self.btn = Button(ax_btn, 'Print', hovercolor='0.975')
+		self.btn.on_clicked(self._print)
 
-		pass
+		for i, key in enumerate(tunables):
+			val, _, v_min, v_max = self.fc.config[key]
 
+			slider_ax = plt.axes(
+				[0.70, start_y - (i * spacing), 0.20, 0.03],
+				facecolor=ax_color
+			)
+			slider = Slider(
+				ax			=	slider_ax,
+				label		=	key,
+				orientation	=	'horizontal',
+				
+				valinit		=	val,
+				valmin		=	min_v,
+				valmax		=	max_v,
+			)
 
+			slider.on_changed(self._updater(key))
+			self.sliders.append(slider)
 
-def falloff_tinker(wf, fc, dist_max=5000):
+	def _updater(self, key):
+		def update(val):
+			# Update config/functions
+			self.fc.set(key, val)
+			self._funcs()
+
+			# Update plots
+			self.axPhysP.set_ydata(self.fnPhysP(self.dists))
+			self.axPhysP.set_ydata(self.fnPhysT(self.dists))
+
+			self.axIntrP.set_ydata(self.fnIntrP(self.dists))
+			self.axIntrP.set_ydata(self.fnIntrT(self.dists))
+            
+            # Redraw
+			self.fig.canvas.draw_idle()
+		return update
 	
+	def _print(self, event):
+		title = f"\n=== {self.fc.name} ==="
 
-	#	Vectorize functions
-
-	#	Plot
-	fig, ax = plt.subplots()
-	plt.subplots_adjust(bottom=0.25)
-
-	slider_
-
-
-	pass
+		print(title)
+		for k, v in self.fc.config.items():
+			if v[1]: print(f"'{k}': {v[0]:.4f},")
+		print("="*len(title)+"\n")
