@@ -2,6 +2,7 @@ import re
 import requests
 
 import numpy as np
+from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 
 # ===== Configuration =====
@@ -22,57 +23,52 @@ def lerp(a, b, t):
 	return (1-t)*a + t*b
 
 def solve_itp(fn, tgt, a, b, tol=1., k1=0.2, k2=2.0):
-	# Root-finding
-	def g(x): return func(x) - target
+	targets = np.atleast_1d(targets)
+	a = np.full(targets.shape, float(low))
+	b = np.full(targets.shape, float(high))
 
-	#
-	y_a = g(a)
-	y_b = g(b)
+	def g(x): return fn(x) - targets
 
-	# 2. Safety Check: If root isn't bracketed (e.g., damage never drops that low),
-	#    return the closest boundary.
-	if y_a * y_b > 0:
-		return a if abs(y_a) < abs(y_b) else b
+	y_a, y_b = g(a), g(b)
 
-	# 3. ITP Initialization
-	n_half = math.ceil(math.log2((b - a) / (2 * tol))) if (b - a) > 0 else 1
-	n_max = n_half + 20
+	# Handle cases where target is outside current physics bounds
+	# (e.g. projectile stops before reaching damage_very_far)
+	mask = (y_a * y_b < 0)
 
-	# Ensure correct ordering for the algorithm
-	if y_a > y_b:
-		a, b = b, a
-		y_a, y_b = y_b, y_a
+	# Constants for ITP logic
+	k1 = 0.2
+	k2 = 2.0
+	n_half = np.ceil(np.log2((b - a) / (2 * tol)))
 
-	for j in range(n_max):
-		# Calculating parameters
+	for j in range(max_iter):
+		# 1. Interpolation (Regula Falsi)
+		# Avoid division by zero: if y_a == y_b, points are identical
+		denom = y_b - y_a
+		x_f = np.where(np.abs(denom) > 1e-9, (y_b * a - y_a * b) / denom, (a + b) / 2)
+
+		# 2. Truncation
 		x_half = (a + b) / 2
-		r = tol * (2 ** (n_half - j)) if j <= n_half else 0
-
-		# Interpolation (Regula Falsi)
-		if y_b - y_a == 0: break # Avoid division by zero
-		x_f = (y_b * a - y_a * b) / (y_b - y_a)
-
-		# Truncation
-		sigma = 1 if x_half - x_f > 0 else -1
-		delta = k1 * ((b - a) ** k2)
-		if delta > abs(x_half - x_f): delta = abs(x_half - x_f)
-
+		r = tol * (2.0 ** (n_half - j))
+		sigma = np.sign(x_half - x_f)
+		delta = np.minimum(k1 * ((b - a) ** k2), np.abs(x_half - x_f))
 		x_t = x_f + sigma * delta
 
-		# Projection
-		x_itp = x_t if abs(x_t - x_half) <= r else x_half - sigma * r
+		# 3. Projection
+		x_itp = np.where(np.abs(x_t - x_half) <= r, x_t, x_half - sigma * r)
 
-		# Update bounds
+		# Update Bounds
 		y_itp = g(x_itp)
-		if y_itp > 0:
-			b, y_b = x_itp, y_itp
-		elif y_itp < 0:
-			a, y_a = x_itp, y_itp
-		else:
-			return x_itp # Exact match found
 
-		# Check convergence
-		if (b - a) < 2 * tol: break
+		# Vectorized update of a and b
+		side = y_itp * y_a > 0
+		a = np.where(side, x_itp, a)
+		y_a = np.where(side, y_itp, y_a)
+		b = np.where(~side, x_itp, b)
+		y_b = np.where(~side, y_itp, y_b)
+
+		# Check convergence across the whole vector
+		if np.all((b - a) < 2 * tol): break
+	
 	return (a + b) / 2
 
 def htk_fmt(dmg):
@@ -139,6 +135,7 @@ def htk_range_text(wf, fc, dist_max=5000, dist_inc=100):
 
 # ===== Storage =====
 class WeaponFalloff:
+	# Containts weapon-specific falloff data.
 	def __init__(self, weapon_name):
 		self.name = weapon_name
 
@@ -159,6 +156,7 @@ class WeaponFalloff:
 		}
 		self.modded = {}
 
+	#	Helper functions
 	def fetch(self):
 		"""
 		Scrapes weapon data from github.
@@ -198,30 +196,8 @@ class WeaponFalloff:
 			except ValueError:
 				self.default[key] = val_raw
 
-class FalloffCurve:
-	def __init__(self, name):
-		self.name = name
-		self.config = {
-			"dist_near": 	0.90,
-			"dist_far":		0.60, 
-			"dist_vfar":	0.25,
-
-			"dmg_scale":	1.0,
-			"dmg_pilot":	1.0,
-			"dmg_titan":	1.5,
-		}
-
-	def get(name):
-		return self.config[name]
-
-	#	Overridden in child class
-	def calibrate(self, data):
-		pass
-
-	def damage_at(self, dist_hu, isHeavyArmor):
-		return 0.
-
-	def damage_lerp(self, dist_hu, isHeavyArmor, isModded):
+	#	Get damage
+	def damage_at(self, dist_hu, isHeavyArmor, isModded):
 		# interpolation consts
 		strA = "damage_near_"
 		strB = "damage_far_"
@@ -244,34 +220,65 @@ class FalloffCurve:
 
 		return lerp(dmgA, dmgB, t)
 
+
+class FalloffCurve:
+	def __init__(self, name):
+		self.name = name
+		self.config = {
+		#	Name			Defl.	Tune?	Min		Max
+			"dmg_scale":	(1.0,	True,	0.001,	10.0),
+			"dmg_pilot":	(1.0,	True,	0.1,	5.0),
+			"dmg_titan":	(1.5,	True,	0.1,	5.0),
+		}
+
+	def get(self, key):
+		return self.config.get(key, 0)[0]
+	def set(self, key, val):
+		self.config[key][0] = val
+
+	#	Overridden in child class
+	def damage_at(self, dist_hu, isHeavyArmor):
+		raise NotImplementedError
+
 	# Constant
 	def apply(self, data, isHeavyArmor):
 		mod_data = data.copy()
 
-		# Damage intervals
-		dmg_max = self.damage_at(0., isHeavyArmor)
+		#	Retrieve vanilla values
+		indices = [
+			"damage_near_",
+			"damage_near_",
+			"damage_far_",
+			"damage_very_far_",
+		]
+		
+		dists = np.array([ wf.get(i+"distance") for i in indices ])
+		dists[0] = 0.0
 
-		tgt_near = dmg_max * 0.95
-		tgt_far  = dmg_max * 0.55
-		tgt_vfar = dmg_max * 0.30
+		tgtP = np.array([ wf.get(i+"value") for i in indices ])
+		tgtT = np.array([ wf.get(i+"value_titanarmor") for i in indices ])
 
-		# Search
-		range = 1.5e4
+		#	Physics calculation
+		tunable = [k for k, v in self.config.itmes() if v[1]]
+		guess = [self.config[k][0] for k in tunable]
+		bounds = [self.config[k][2:4] for k in tunable_keys]
+		
+		def objective(params):
+			for i, k in enumerate(tunable):
+				self.set(k, params[i])
 
-		dist_near = solve_itp(self.damage_at, tgt_near, 0, range)
-		dist_far  = solve_itp(self.damage_at, tgt_far,  0, range)
-		dist_vfar = solve_itp(self.damage_at, tgt_vfar, 0, range)
+			predP = self.damage_at(dists, False)
+			predT = self.damage_at(dists, True)
+			
+			errP = np.sum((predP - tgtP)**2)
+			errT = np.sum((predT - tgtT)**2)
 
-		dmg_near = self.damage_at(dist_95)
-		dmg_far  = self.damage_at(dist_55)
-		dmg_vfar = self.damage_at(dist_30)
+			return errP + errT
 
-		# Enforce
-
-		# Assign
-
-
-		return
+		res = minimize(objective, guess, bounds=bounds, method='L-BFGS-B')
+		
+		if res.success: print(f"Calibrated {self.name}: Loss {res.fun:.4f}")
+		return res
 
 #	Constants
 DMG_PEN   = 0.1
@@ -281,118 +288,143 @@ DMG_TITAN = 2.5
 ARM_HFVEL = 400.0
 ARM_PILOT = 5.0
 ARM_TITAN = 50.0
+
+
+CONST_FT_M = 0.3048
+CONST_HU_M = 0.01905
+CONST_GR_G = 0.0646989
+
+CONST_MACH = 343.0
+
+DRAG_TABLES = {
+	"G1": np.array([[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],	# Mach
+					[0.2, 0.2, 0.2, 0.4, 0.5, 0.4, 0.3]]),	# Cd
+	"G7": np.array([[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],
+					[0.1, 0.1, 0.1, 0.2, 0.3, 0.2, 0.1]]),
+}
+
+
+
+
 class BallisticFalloff(FalloffCurve):
-	CONST_DRAG = 0.0015
+	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm, len=2.0, twist=10, model="G1"):
+		super().__init__(name)
 
-	CONST_FT_M = 0.3048
-	CONST_HU_M = 0.01905
-	CONST_GR_G = 0.0646989
+		#	Models
+		self.model = model
 
-	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm):
 		#	Bullet parameters
-		self.mass_kg = mass_gr * CONST_GR_G * 0.001
-		
-		self.v0_ms = vel_fps * CONST_FT_M
-		self.bc = bc
-		self.cal_mm = cal_mm
+		mass_kg = mass_gr * CONST_GR_G * 0.001
+		v0_ms = vel_fps*CONST_FT_M
+		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2			# Sectional density in lbm / sq in
 
-		# Sectional density in lbm / sq in
-		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2
+		self.config.update({
+			# Name			Default		Tune?	Min		Max
+			"arm_const":	(ARM_HFVEL,	True,	10.0,	1e3  ),
+			"arm_pilot":	(ARM_PILOT,	True,	0.0,	1e2  ),
+			"arm_titan":	(ARM_TITAN,	True,	0.0,	5e2	 ),
 
-		#	Scaling
-		self.config = {
-			"dmg_scale":	DMG_PEN,
-			"dmg_pilot":	DMG_PILOT,
-			"dmg_titan":	DMG_TITAN,
+			"mass_kg":		(mass_kg,	True,	5e-5,	0.1  ),
+			"v0_ms":		(v0_ms,		True,	2e2,	3500 ),			
+			"bc_kgm2":		(bc,		True,	5e1,	6e2  ),
 
-			"arm_const":	ARM_HFVEL,
-			"arm_pilot":	ARM_PILOT,
-			"arm_titan":	ARM_TITAN,
-
-			"cfg_mass_kg":	mass_gr * CONST_GR_G * 0.001,
-			"cfg_caliber":	cal_mm,
-			"cfg_bc":		bc,
-			"cfg_v0_ms":	vel_fps*CONST_FT_M,
-		}
-
-	def calibrate(self, wpn):
-		#	Retrieve data
-		dists = np.array([
-			0.,
-			wpn["damage_near_distance"],
-			wpn["damage_far_distance"],
-		])
-
-		tgt_pilot = np.array([
-			wpn["damage_near_value"],
-			wpn["damage_near_value"],
-			wpn["damage_far_value"],
-		])
-
-		tgt_titan = np.array([
-			wpn["damage_near_value_titanarmor"],
-			wpn["damage_near_value_titanarmor"],
-			wpn["damage_far_value_titanarmor"],
-		])
-
-		#	Find constants
-		vel, pen = zip(*[self._phys_at(d, False) for d in dists])
-		vel, pen = np.array(vel), np.array(pen)
-
-		# Equation: P / D = S + (S * A * C) * (1/v)
-        # Linear form: Y = M*X + b
-        # X = vel ** -1
-        # Y = pen / dmg
-
-		x = np.vstack([1.0 / vels, np.ones(len(vels))]).T
-		y_pilot = pen / tgt_pilot
-		y_titan = pen / tgt_titan
-
-		(m_p, c_p), _, _, _ = np.linalg.lstsq(X, y_pilot, rcond=None)
-		(m_t, c_t), _, _, _ = np.linalg.lstsq(X, y_titan, rcond=None)
-
-		#dmg_p = 1.0
-		dmg_t = c_p / c_t
-
-		arm_p = m_p / (c_p * self.consts["arm_const"])
-		arm_t = m_t / (c_t * self.consts["arm_const"])
-
-		self.consts.update({
-			"dmg_scale":	float(c_p),
-			"dmg_pilot":	1.0,
-			"dmg_titan":	float(dmg_t),
-
-			#"arm_const":	ARM_HFVEL,
-			"arm_pilot":	abs(float(arm_p)),
-			"arm_titan":	abs(float(arm_t)),
+			"cal_mm":		(cal_mm,	True,	3,		30   ),
+			#"len_cal":   	(len,		True,	1.0,	5.5	 ),
+			#"twist":		(twist,		True,	7.0,	24.0 ),
+			#"tumble_mod":	(0.5,		True,	0.0,	2.0  ),
 		})
 
-		return self.consts
+	def _drag(self, v_ms):
+		mach = v_ms / CONST_MACH
+		table = DRAG_TABLES.get(self.model, DRAG_TABLES["G1"])
+		return np.interp(mach, table[0], table[1])
 
 	def _phys_at(self, dist_hu):
-		# Conversion
+		#	Initial
 		dist_m = dist_hu * CONST_HU_M
-		decay = (dist*CONST_HU_M) * self.bc / CONST_DRAG
-		vel = self.v0_ms * math.exp(-decay * dist_m)
+		v0 = self.get("v0_ms")
+		bc = max(self.get("bc_kgm2"), 1.0)
+		
+		# Mach drag
+		cd0 = self._drag(v0)
+		k0 = cd0 / bc
 
-		# Puncture factor
-		e_J = 0.5 * self.mass_kg * vel * vel
-		pen = e_J * self.sd
+		# Stability, tumble
+		v0_fps = v0 / CONST_FT_M
+		sg0 = sg(v_fps0)
+
+		#	Final
+		# Velocity
+		v1 = v0 / (1.0 + v0 * k0 * dist_m)
+		#v1_fps = v1 / CONST_FT_M
+
+		# Penetration
+		#dmg_mult = 1.0 + self.get("tumble_dmg") * s1
+		pen = (0.5*m*v1*v1) * self.sd #* dmg_mult
 
 		# Return phys
 		return vel, pen
 
+	def _dmg_scale(self, dist_hu, v_ms, pen):
+		return pen
+
 	def damage_at(self, dist_hu, isHeavyArmor):
 		vel, pen = self._phys_at(dist_hu)
+		pen = self._dmg_scale(dist_hu, vel, pen)
 		
 		# Armor calculation
-		armor = self.consts["arm_titan"] if isHeavyArmor else self.consts["arm_pilot"]
-		armor_eff = armor * ARM_CONST / max(vel, 1.)
+		armor = self.get("arm_titan") if isHeavyArmor else self.get("arm_pilot")
+		armor_eff = armor * self.get("arm_const") / np.maximum(vel, 1.)
 		dr = 1. / (1. + armor_eff)
 		
 		# Damage
-		damage = pen/DMG_PEN * dr
-		return max(1., int(damage))
+		damage = dr * pen/self.get("dmg_scale")
+		return np.maximum(1., int(damage))
+
+class RifleFalloff(BallisticFalloff):
+	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm, len=2.0, twist=10, model="G1"):
+		super().__init__(name, mass_gr, vel_fps, bc, cal_mm, model)
+		self.config.update({
+			# Name		Default		Tune?	Min		Max
+			"len_cal":	(len,		True,	1.0,	5.5	 ),
+			"twist":	(twist,		True,	7.0,	24.0 ),
+			"tumble":	(0.5,		True,	0.0,	4.0  ),
+		})
+	
+	def _stability(self, v_ms):
+		m  = self.get("mass_kg") * 1e3 / CONST_GR_G
+		d  = self.get("cal_mm") * 25.4
+		l  = self.get("len_cal")
+		t  = self.get("twist")
+
+		v_fps = v_ms / CONST_FT_M
+
+		sg = (30*m)/(t*t*d*d*d*l*(1+l*l)) * np.cbrt(v_fps / 2800)
+		return 1.0/(1.0 + np.exp(10.0 * (sg - 0.95))) 			# Sigmoid to estimate stability
+
+	def _drag(self, v_ms):
+		cd_base = super()._drag(v_ms)
+
+		stable = self._stability(v_ms)
+		return cd_base * (1.0 + stable*3.0)
+
+	def _dmg_scale(self, dist_hu, vel_ms, pen):
+		# Add Tumble Damage Buff
+		stable = self._calc_stability(vel_ms)
+		mult = 1.0 + stable*(self.get("tumble") - 1.0)
+		return pen * mult
+
+class ShotgunFalloff(BallisticFalloff):
+	def __init__(self, name, mass_gr, vel_fps, bc, cal_mm, len=2.0, twist=10, model="G1"):
+		super().__init__(name, mass_gr, vel_fps, bc, cal_mm, model)
+		self.config.update({
+			# Name		Default		Tune?	Min		Max
+			"len_cal":	(len,		True,	1.0,	5.5	 ),
+			"twist":	(twist,		True,	7.0,	24.0 ),
+			"tumble":	(0.5,		True,	0.0,	4.0  ),
+		})
+	pass
+
 
 # ===== Plotting utils =====
 class FalloffGUI:
