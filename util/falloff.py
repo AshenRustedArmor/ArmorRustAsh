@@ -1,5 +1,7 @@
 import re
 import requests
+import argparse
+import sys
 
 import numpy as np
 from scipy.optimize import minimize
@@ -9,13 +11,31 @@ import matplotlib.pyplot as plt
 # Sourcing
 SOURCE_URL = "https://raw.githubusercontent.com/Syampuuh/Titanfall2/master/scripts/weapons/"
 
-# Statistics
+# Params
 PILOT_HP = 100
 
-# Graphing
-GRAPH_WIDTH = 100
-GRAPH_DIST = 5000
-GRAPH_STEPS = 50
+ARM_HFVEL = 400.0
+ARM_PILOT = 5.0
+ARM_TITAN = 50.0
+
+# Constants
+CONST_FT_M = 0.3048
+CONST_HU_M = 0.01905
+CONST_GR_G = 0.0646989
+
+CONST_MACH = 343.0
+
+DRAG_TABLES = {
+	"G1": np.array([
+		[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],	# Mach
+		[0.2, 0.2, 0.2, 0.4, 0.5, 0.4, 0.3]		# Cd
+	]),	
+	
+	"G7": np.array([
+		[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],
+		[0.1, 0.1, 0.1, 0.2, 0.3, 0.2, 0.1]
+	]),
+}
 
 # ===== Functions =====
 def lerp(a, b, t):
@@ -217,11 +237,11 @@ class WeaponFalloff:
 		t = dmgDist / (distB - distA)
         
 		# get damage
-		dmgA = strA + "value" + ("_titanarmor" if isHeavyArmor else "")
-		dmgB = strB + "value" + ("_titanarmor" if isHeavyArmor else "")
+		suffix = "_titanarmor" if isHeavyArmor else ""
+		dmgA = strA + "value" + suffix
+		dmgB = strB + "value" + suffix
 
 		return lerp(dmgA, dmgB, t)
-
 
 class FalloffCurve:
 	def __init__(self, name):
@@ -233,14 +253,11 @@ class FalloffCurve:
 			"dmg_titan":	(1.5,	True,	0.1,	5.0),
 		}
 
-	def get(self, key):
-		return self.config.get(key, 0)[0]
-	def set(self, key, val):
-		self.config[key][0] = val
+	def get(self, key): return self.config.get(key, 0)[0]
+	def set(self, key, val): self.config[key][0] = val
 
 	#	Overridden in child class
-	def damage_at(self, dist_hu, isHeavyArmor):
-		raise NotImplementedError
+	def damage_at(self, dist_hu, isHeavyArmor): raise NotImplementedError
 
 	# Constant
 	def apply(self, data, isHeavyArmor):
@@ -287,23 +304,11 @@ DMG_PEN   = 0.1
 DMG_PILOT = 1.0
 DMG_TITAN = 2.5
 
-ARM_HFVEL = 400.0
-ARM_PILOT = 5.0
-ARM_TITAN = 50.0
 
 
-CONST_FT_M = 0.3048
-CONST_HU_M = 0.01905
-CONST_GR_G = 0.0646989
 
-CONST_MACH = 343.0
 
-DRAG_TABLES = {
-	"G1": np.array([[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],	# Mach
-					[0.2, 0.2, 0.2, 0.4, 0.5, 0.4, 0.3]]),	# Cd
-	"G7": np.array([[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],
-					[0.1, 0.1, 0.1, 0.2, 0.3, 0.2, 0.1]]),
-}
+
 class BallisticFalloff(FalloffCurve):
 	def __init__(self, params):
 		"""
@@ -450,7 +455,7 @@ class ShotgunFalloff(BallisticFalloff):
 
 # ===== Plotting utils =====
 class FalloffGUI:
-	def __init__(self, wf, fc):
+	def __init__(self, wf, fc, dist_max = 5000, dist_ct = 200):
 		self.wf = wf; self.fc = fc; self.sliders = []
 
 		#	Figure, subplots
@@ -476,7 +481,7 @@ class FalloffGUI:
 		self.fnIntrT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, False))
 		self.fnGameT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, True))
 
-	def _graph(self, dist_max = 5000, dist_ct = 200):
+	def _graph(self):
 		#	Plot
 		# Titles/labels/legend
 		self.ax_p.clear()
@@ -511,8 +516,7 @@ class FalloffGUI:
 
 		# Formatting
 		ax_color = 'lightgoldenrodyellow'
-		start_y = 0.85
-		spacing = 0.04
+		start_y = 0.85; spacing = 0.04
 
 		# Print button
 		ax_btn = plt.axes([0.70, 
@@ -567,3 +571,31 @@ class FalloffGUI:
 		for k, v in self.fc.config.items():
 			if v[1]: print(f"'{k}': {v[0]:.4f},")
 		print("="*len(title)+"\n")
+
+# ===== Main Execution =====
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser(description="TF|2 Falloff Calc")
+	parser.add_argument("weapon", help="Internal name (e.g. mp_weapon_rspn101)")
+	args = parser.parse_args()
+
+	# 1. Lookup Weapon
+	if args.weapon not in WEAPON_DB:
+		print(f"Error: '{args.weapon}' not in database.")
+		print("Available:", ", ".join(WEAPON_DB.keys()))
+		sys.exit(1)
+
+	db_entry = WEAPON_DB[args.weapon]
+
+	# 2. Fetch Vanilla Data
+	wf = WeaponFalloff(args.weapon)
+	success = wf.fetch()
+	if not success: print("Proceeding without vanilla comparison...")
+
+	# 3. Initialize Physics Model
+	print(f"Loading Physics for: {db_entry['name']}")
+	if db_entry["type"] == "rifle": model = RifleFalloff(db_entry["params"], **db_entry["spec"])
+	elif db_entry["type"] == "shotgun": model = ShotgunFalloff(db_entry["params"], **db_entry["spec"])
+	else: print("Unknown weapon type."); sys.exit(1)
+
+	# 4. Launch GUI
+	gui = FalloffGUI(wf, model)
