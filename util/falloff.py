@@ -164,6 +164,7 @@ class WeaponFalloff:
 			"damage_near_value": 				0,
 			"damage_far_value": 				0,
 			"damage_very_far_value": 			0,
+		}
 
 	#	Overridden in child class
 	def damage_at(self, dist_hu, isHeavyArmor): raise NotImplementedError
@@ -263,10 +264,7 @@ class VanillaFalloff(FalloffCurve):
 		for key in self.default.keys():
 			pattern = f'"{key}"\s*"([^"]+)"'
 			matched = re.search(pattern, clean)
-<<<<<<< HEAD
-=======
 
->>>>>>> parent of 1ee5b97 (Bug squashing)
 			if not matched: continue
 
 			val_raw = matched.group(1)
