@@ -2,12 +2,10 @@ import re
 import requests
 import argparse
 import sys
-import copy
 
 import numpy as np
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
 
 # ===== Configuration =====
 # Sourcing
@@ -107,7 +105,7 @@ def htk_fmt(dmg):
 	elif frac <= 0.7: return f"{base:2d}."
 	else: return f"{base+1:2d}-"
 
-def htk_range_text(vanilla, physics, dist_max=5000, dist_inc=100):
+def htk_range_text(wf, fc, dist_max=5000, dist_inc=100):
 	"""
 	Builds the range meter notation for weapon keyvars.
 	"""
@@ -123,52 +121,49 @@ def htk_range_text(vanilla, physics, dist_max=5000, dist_inc=100):
 		#dmgP = fnDmgP(dist_rng); dmgT = fnDmgT(dist_rng)
 	
 		for d in [ 0,
-			vanilla.default["damage_near_distance"],
-			vanilla.default["damage_far_distance"],
-			vanilla.default["damage_very_far_distance"]
+			wf.default["damage_near_distance"],
+			wf.default["damage_far_distance"],
+			wf.default["damage_very_far_distance"]
 		]:
 			idx = int(d/dist_inc)
 
-			defP = physics.damage_lerp(d, False)
+			defP = fc.damage_lerp(d, False)
 			strDefP = htk_fmt(defP)
-			defT = physics.damage_lerp(d, True)
+			defT = fc.damage_lerp(d, True)
 			strDefT = htk_fmt(defT)
 
 		for d in [ 0,
-			vanilla.modded["damage_near_distance"],
-			vanilla.modded["damage_far_distance"],
-			vanilla.modded["damage_very_far_distance"]
+			wf.modded["damage_near_distance"],
+			wf.modded["damage_far_distance"],
+			wf.modded["damage_very_far_distance"]
 		]:
 			idx = int(d/dist_inc)
 
-			dmgP = physics.damage_at(d, False)
+			dmgP = fc.damage_at(d, False)
 			strDmgP = htk_fmt(dmgP)
-			dmgT = physics.damage_at(d, True)
+			dmgT = fc.damage_at(d, True)
 			strDmgT = htk_fmt(dmgT)
 
 		pass
 	
 	# Header section
 	header = []
-	header.append(f"//\t\t{vanilla.name}")
+	header.append(f"//\t\t{wf.name}")
 	header.append(f"//\tCOMMENTS 1")
 	header.append(f"//\tCOMMENTS 2")
 
 	pass
 
-# ===== Storage ====
-class FalloffCurve:
-	def __init__(self, name):
-		self.name = name
-		self.config = {
-		#	Name			Defl.	Tune?	Min		Max
-			"dmg_scale":	[1.0,	True,	0.001,	1e1],
-			"dmg_pilot":	[1.0,	True,	0.1,	5.0],
-			"dmg_titan":	[1.5,	True,	0.1,	5.0],
-		}
+# ===== Storage =====
+class WeaponFalloff:
+	# Containts weapon-specific falloff data.
+	def __init__(self, weapon_name):
+		self.name = weapon_name
 
-	def get(self, key): return self.config.get(key, 0)[0]
-	def set(self, key, val): self.config[key][0] = val
+		self.default = {
+			"damage_near_value": 				0,
+			"damage_far_value": 				0,
+			"damage_very_far_value": 			0,
 
 	#	Overridden in child class
 	def damage_at(self, dist_hu, isHeavyArmor): raise NotImplementedError
@@ -227,14 +222,15 @@ class VanillaFalloff(FalloffCurve):
 			"damage_far_value_titanarmor": 0,
 			"damage_very_far_value_titanarmor": 0,
 
-			"projectiles_per_shot": 1,
-			"spread_stand_hip": 0,
-			"spread_stand_ads": 0
-		}
+			"damage_near_distance": 			0,
+			"damage_far_distance": 				0,
+			"damage_very_far_distance":			0,
 
-		self.is_shotgun = False
-		self.is_projectile = False
-	
+			"red_crosshair_range":				0
+		}
+		self.modded = {}
+
+	#	Helper functions
 	def fetch(self):
 		"""
 		Scrapes weapon data from github.
@@ -264,23 +260,43 @@ class VanillaFalloff(FalloffCurve):
 		clean = re.sub(r'//.*', '', keyvars)
 
 		# Parse
-		for key in self.data.keys():
-			pattern = rf'"{key}"\s*"([^"]+)"'
+		for key in self.default.keys():
+			pattern = f'"{key}"\s*"([^"]+)"'
 			matched = re.search(pattern, clean)
+<<<<<<< HEAD
+=======
+
+>>>>>>> parent of 1ee5b97 (Bug squashing)
 			if not matched: continue
 
-			raw = matched.group(1)
-			try: self.data[key] = float(raw)
-			except ValueError: self.data[key] = raw
+			val_raw = matched.group(1)
+			try:
+				self.default[key] = float(raw_val)
+			except ValueError:
+				self.default[key] = val_raw
 
-	def _analyze(self):
-		pellets = self.data.get("projectiles_per_shot", 1)
-		self.is_shotgun = (pellets > 1)
-		self.is_projectile = ("projectile_launch_speed" in self.data)
+	#	Get damage
+	def damage_at(self, dist_hu, isHeavyArmor, isModded):
+		# interpolation consts
+		strA = "damage_near_"
+		strB = "damage_far_"
 
-	def damage_at(self, dist_hu, isHeavyArmor):
+		consts = self.modded if isModded else self.default
+
+		if dist_hu >= consts["damage_far_distance"]:
+			strA = "damage_far_"
+			strB = "damage_very_far_"
+
+		distA = consts[strA + "distance"]
+		distB = consts[strB + "distance"]
+		
+		dmgDist = dist_hu - distA
+		t = dmgDist / (distB - distA)
+        
+		# get damage
 		suffix = "_titanarmor" if isHeavyArmor else ""
-		dist_hu = np.atleast_1d(dist_hu)
+		dmgA = strA + "value" + suffix
+		dmgB = strB + "value" + suffix
 
 		# interpolation consts
 		a_str, b_str, c_str = "damage_near_", "damage_far_", "damage_far_"
@@ -319,10 +335,72 @@ class VanillaFalloff(FalloffCurve):
 		out = (1-t)*a_dmg + t*b_dmg
 		return out[0] if out.size == 1 else out
 
+class FalloffCurve:
+	def __init__(self, name):
+		self.name = name
+		self.config = {
+		#	Name			Defl.	Tune?	Min		Max
+			"dmg_scale":	(1.0,	True,	0.001,	10.0),
+			"dmg_pilot":	(1.0,	True,	0.1,	5.0),
+			"dmg_titan":	(1.5,	True,	0.1,	5.0),
+		}
+
+	def get(self, key): return self.config.get(key, 0)[0]
+	def set(self, key, val): self.config[key][0] = val
+
+	#	Overridden in child class
+	def damage_at(self, dist_hu, isHeavyArmor): raise NotImplementedError
+
+	# Constant
+	def apply(self, data, isHeavyArmor):
+		mod_data = data.copy()
+
+		#	Retrieve vanilla values
+		indices = [
+			"damage_near_",
+			"damage_near_",
+			"damage_far_",
+			"damage_very_far_",
+		]
+		
+		dists = np.array([ wf.get(i+"distance") for i in indices ])
+		dists[0] = 0.0
+
+		tgtP = np.array([ wf.get(i+"value") for i in indices ])
+		tgtT = np.array([ wf.get(i+"value_titanarmor") for i in indices ])
+
+		#	Physics calculation
+		tunable = [k for k, v in self.config.itmes() if v[1]]
+		guess = [self.config[k][0] for k in tunable]
+		bounds = [self.config[k][2:4] for k in tunable_keys]
+		
+		def objective(params):
+			for i, k in enumerate(tunable):
+				self.set(k, params[i])
+
+			predP = self.damage_at(dists, False)
+			predT = self.damage_at(dists, True)
+			
+			errP = np.sum((predP - tgtP)**2)
+			errT = np.sum((predT - tgtT)**2)
+
+			return errP + errT
+
+		res = minimize(objective, guess, bounds=bounds, method='L-BFGS-B')
+		
+		if res.success: print(f"Calibrated {self.name}: Loss {res.fun:.4f}")
+		return res
+
 #	Constants
 DMG_PEN   = 0.1
 DMG_PILOT = 1.0
 DMG_TITAN = 2.5
+
+
+
+
+
+
 class BallisticFalloff(FalloffCurve):
 	def __init__(self, params):
 		"""
@@ -349,21 +427,24 @@ class BallisticFalloff(FalloffCurve):
 		cal_mm = params["cal_mm"]
 
 		# Sectional density in lbm / sq in
-		self.sd = (params["mass_gr"]/7000.) * (cal_mm/25.4)**-2
+		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2
 
 		#	Superclass
 		super().__init__(name)
 		self.config.update({
 			# Name			Default		Tune?	Min		Max
-			"arm_const":	[ARM_HFVEL,	True,	0.0,	1e3  ],
-			"arm_pilot":	[ARM_PILOT,	True,	0.0,	1e2  ],
-			"arm_titan":	[ARM_TITAN,	True,	0.0,	5e2	 ],
+			"arm_const":	(ARM_HFVEL,	True,	10.0,	1e3  ),
+			"arm_pilot":	(ARM_PILOT,	True,	0.0,	1e2  ),
+			"arm_titan":	(ARM_TITAN,	True,	0.0,	5e2	 ),
 
-			"mass_kg":		[mass_kg,	True,	5e-5,	0.1  ],
-			"v0_ms":		[v0_ms,		True,	2e2,	3500 ],			
-			"bc_kgm2":		[bc_kgm2,	True,	5e1,	6e2  ],
+			"mass_kg":		(mass_kg,	True,	5e-5,	0.1  ),
+			"v0_ms":		(v0_ms,		True,	2e2,	3500 ),			
+			"bc_kgm2":		(bc,		True,	5e1,	6e2  ),
 
-			"cal_mm":		[cal_mm,	True,	3,		30   ],
+			"cal_mm":		(cal_mm,	True,	3,		30   ),
+			#"len_cal":   	(len,		True,	1.0,	5.5	 ),
+			#"twist":		(twist,		True,	7.0,	24.0 ),
+			#"tumble_mod":	(0.5,		True,	0.0,	2.0  ),
 		})
 
 	def _drag(self, v_ms):
@@ -376,30 +457,35 @@ class BallisticFalloff(FalloffCurve):
 		dist_m = dist_hu * CONST_HU_M
 		v0 = self.get("v0_ms")
 		bc = max(self.get("bc_kgm2"), 1.0)
-		m = self.get("mass_kg")
-	
-		#	Final
-		# Velocity
+		
+		# Mach drag
 		cd0 = self._drag(v0)
 		k0 = cd0 / bc
-		v1 = v0 * np.exp(-k0 * dist_m)
+
+		# Stability, tumble
+		v0_fps = v0 / CONST_FT_M
+		sg0 = sg(v_fps0)
+
+		#	Final
+		# Velocity
+		v1 = v0 / (1.0 + v0 * k0 * dist_m)
 
 		# Penetration
 		pen = (0.5*m*v1*v1) * self.sd #* dmg_mult
 
 		# Return phys
-		return v1, pen
+		return vel, pen
 
 	def _dmg_scale(self, dist_hu, v_ms, pen, isHeavyArmor):
 		return pen
 
 	def damage_at(self, dist_hu, isHeavyArmor):
 		vel, pen = self._phys_at(dist_hu)
-		pen = self._dmg_scale(dist_hu, vel, pen, isHeavyArmor)
+		pen = self._dmg_scale(dist_hu, vel, pen)
 		
 		# Armor calculation
 		armor = self.get("arm_titan") if isHeavyArmor else self.get("arm_pilot")
-		armor_eff = (armor * self.get("arm_const")) / np.maximum(vel, 1.)
+		armor_eff = armor * self.get("arm_const") / np.maximum(vel, 1.)
 		dr = 1. / (1. + armor_eff)
 		
 		# Damage
@@ -458,11 +544,11 @@ class RifleFalloff(BallisticFalloff):
 
 	def _drag(self, v_ms):
 		cd_base = super()._drag(v_ms)
-		stable = self._stability(v_ms)
+		stable = self._stability(vel_ms)
 		return cd_base * (1.0 + stable*3.0)
 
-	def _dmg_scale(self, dist_hu, v_ms, pen, isHeavyArmor):
-		stable = self._stability(v_ms)
+	def _dmg_scale(self, dist_hu, vel_ms, pen, isHeavyArmor):
+		stable = self._stability(vel_ms)
 		mult = 1.0 + stable*(self.get("tumble") - 1.0)
 		return pen * mult
 
@@ -471,10 +557,10 @@ class ShotgunFalloff(BallisticFalloff):
 		super().__init__(params)
 		self.config.update({
 			# Name		Default		Tune?	Min		Max
-			"pellets":	[pellets,	False,	1,		50	],
-			"spread":	[spread,	True, 	0.1,	15.0],
-			"sz_pilot":	[0.5,		False,	0.3,	1.0	],
-			"sz_titan":	[3.5,		False,	2.0,	6.0	],
+			"pellets":	(pellets,	False,	1,		50	),
+			"spread":	(spread,	True, 	0.1,	15.0),
+			"sz_pilot":	(0.5,		False,	0.3,	1.0	),
+			"sz_titan":	(3.5,		False,	2.0,	6.0	),
 		})
 	
 	def _dmg_scale(self, dist_hu, vel_ms, pen, isHeavyArmor):
@@ -483,10 +569,10 @@ class ShotgunFalloff(BallisticFalloff):
 		sz_tgt = self.get("sz_titan") if isHeavyArmor else self.get("sz_pilot")
 		r_tgt  = sz_tgt / 2.0
 
-		spread = dist_m * np.tan(np.radians(self.get("spread")))
+		spread = dist_safe * np.tan(np.radians(self.get("spread")))
 		prob_hit = np.clip(np.pow(sz_tgt/spread, 2), 0.0, 1.0)
 
-		return pen * self.get("pellets") * prob_hit
+		return pen * self.get("pellets") * hit_prob
 
 # ===== Plotting utils =====
 class FalloffGUI:
@@ -495,13 +581,12 @@ class FalloffGUI:
 		self.baked = self.physics.bake(self.vanilla)
 
 		#	Figure, subplots
-		self.sliders = []
 		self.fig, (self.ax_p, self.ax_t) = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
-		plt.subplots_adjust(right=0.55, hspace=0.3)
+		plt.subplots_adjust(right=0.7, hspace=0.3)
 
 		#	Data
 		self.dists = np.linspace(0, dist_max, dist_ct)
-		
+
 		#	Functions
 		self._funcs()
 		self._graph()
@@ -510,13 +595,13 @@ class FalloffGUI:
 		plt.show()
 
 	def _funcs(self):
-		self.fnPhysP = np.vectorize(lambda d: self.physics.damage_at(d, False))
-		self.fnIntrP = np.vectorize(lambda d: self.baked.damage_at(d, False)) #, False))
-		self.fnGameP = np.vectorize(lambda d: self.vanilla.damage_at(d, False)) #, True))
+		self.fnPhysP = np.vectorize(lambda d: self.fc.damage_at(d, False))
+		self.fnIntrP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, False))
+		self.fnGameP = np.vectorize(lambda d: self.fc.damage_lerp(d, False, True))
 
-		self.fnPhysT = np.vectorize(lambda d: self.physics.damage_at(d, True))
-		self.fnIntrT = np.vectorize(lambda d: self.baked.damage_at(d, True)) #, False))
-		self.fnGameT = np.vectorize(lambda d: self.vanilla.damage_at(d, True)) #, True))
+		self.fnPhysT = np.vectorize(lambda d: self.fc.damage_at(d, True))
+		self.fnIntrT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, False))
+		self.fnGameT = np.vectorize(lambda d: self.fc.damage_lerp(d, True, True))
 
 	def _graph(self):
 		#	Plot
@@ -524,8 +609,8 @@ class FalloffGUI:
 		self.ax_p.clear()
 		self.ax_t.clear()
 
-		self.ax_p.set_title(f"{self.vanilla.name}: Pilot")
-		self.ax_t.set_title(f"{self.vanilla.name}: Titan")
+		self.ax_p.set_title(f"{self.wf.name}: Pilot")
+		self.ax_t.set_title(f"{self.wf.name}: Titan")
 
 		self.ax_p.set_ylabel("Damage")
 		self.ax_t.set_ylabel("Damage")
@@ -535,21 +620,21 @@ class FalloffGUI:
 		self.ax_t.grid(True, alpha=0.25)
 
 		# Plot
-		self.axPhysP, = self.ax_p.plot(self.dists, self.fnPhysP(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
-		self.axPhysT, = self.ax_t.plot(self.dists, self.fnPhysT(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
+		self.axPhysP = self.ax_p.plot(self.dists, self.fnPhysP(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
+		self.axPhysT = self.ax_t.plot(self.dists, self.fnPhysT(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
 
-		self.axIntrP, = self.ax_p.plot(self.dists, self.fnIntrP(self.dists), '--', color='orange', alpha=0.6, label='Interpolated')
-		self.axIntrT, = self.ax_t.plot(self.dists, self.fnIntrT(self.dists), '--', color='cyan', alpha=0.6, label='Interpolated')
+		self.axIntrP = self.ax_p.plot(self.dists, self.fnIntrP(self.dists), '--', color='orange', alpha=0.6, label='Interpolated')
+		self.axIntrT = self.ax_t.plot(self.dists, self.fnIntrT(self.dists), '--', color='cyan', alpha=0.6, label='Interpolated')
 
-		self.axGameP, = self.ax_p.plot(self.dists, self.fnGameP(self.dists), '-', color='red', alpha=0.8, label='Vanilla')
-		self.axGameT, = self.ax_t.plot(self.dists, self.fnGameT(self.dists), '-', color='blue', alpha=0.8, label='Vanilla')
+		self.axGameT = self.ax_p.plot(self.dists, self.fnGameP(self.dists), '-', color='red', alpha=0.8, label='Vanilla')
+		self.axGameT = self.ax_t.plot(self.dists, self.fnGameT(self.dists), '-', color='blue', alpha=0.8, label='Vanilla')
 		
 		self.ax_p.legend()
 		self.ax_t.legend()
 
 	def _controls(self):
 		# Identify tunable parameters
-		tunables = [k for k, v in self.physics.config.items() if v[1]]
+		params = [k for k, v in self.fc.config.items() if v[1]]
 
 		# Formatting
 		ax_color = 'lightgoldenrodyellow'
@@ -558,13 +643,14 @@ class FalloffGUI:
 		# Print button
 		ax_btn = plt.axes([0.70, 
 			start_y - (len(tunables) * spacing) - 0.05, 
-			0.1, 0.04
+			0.1,
+			0.04
 		])
 		self.btn = Button(ax_btn, 'Print', hovercolor='0.975')
 		self.btn.on_clicked(self._print)
 
 		for i, key in enumerate(tunables):
-			val, _, v_min, v_max = self.physics.config[key]
+			val, _, v_min, v_max = self.fc.config[key]
 
 			slider_ax = plt.axes(
 				[0.70, start_y - (i * spacing), 0.20, 0.03],
@@ -576,8 +662,8 @@ class FalloffGUI:
 				orientation	=	'horizontal',
 				
 				valinit		=	val,
-				valmin		=	v_min,
-				valmax		=	v_max,
+				valmin		=	min_v,
+				valmax		=	max_v,
 			)
 
 			slider.on_changed(self._updater(key))
@@ -586,58 +672,52 @@ class FalloffGUI:
 	def _updater(self, key):
 		def update(val):
 			# Update config/functions
-			self.physics.set(key, val)
-			self.baked = self.physics.bake(self.vanilla)
+			self.fc.set(key, val)
 			self._funcs()
 
 			# Update plots
 			self.axPhysP.set_ydata(self.fnPhysP(self.dists))
-			self.axPhysT.set_ydata(self.fnPhysT(self.dists))
+			self.axPhysP.set_ydata(self.fnPhysT(self.dists))
 
 			self.axIntrP.set_ydata(self.fnIntrP(self.dists))
-			self.axIntrT.set_ydata(self.fnIntrT(self.dists))
+			self.axIntrP.set_ydata(self.fnIntrT(self.dists))
             
             # Redraw
 			self.fig.canvas.draw_idle()
 		return update
 	
 	def _print(self, event):
-		title = f"\n=== {self.physics.name} ==="
+		title = f"\n=== {self.fc.name} ==="
 
 		print(title)
-		for k, v in self.physics.config.items():
+		for k, v in self.fc.config.items():
 			if v[1]: print(f"'{k}': {v[0]:.4f},")
 		print("="*len(title)+"\n")
 
 # ===== Main Execution =====
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser()
-	parser.add_argument("weapon", help="Internal weapon name (e.g. mp_weapon_rspn101)")
+	parser = argparse.ArgumentParser(description="TF|2 Falloff Calc")
+	parser.add_argument("weapon", help="Internal name (e.g. mp_weapon_rspn101)")
 	args = parser.parse_args()
 
-	# 1. Fetch Real Data
-	vanilla = VanillaFalloff(args.weapon)
-	if not vanilla.fetch(): sys.exit(1)
+	# 1. Lookup Weapon
+	if args.weapon not in WEAPON_DB:
+		print(f"Error: '{args.weapon}' not in database.")
+		print("Available:", ", ".join(WEAPON_DB.keys()))
+		sys.exit(1)
 
-	# 2. Derive Class
-	if vanilla.is_shotgun: 
-		params = {
-			"name": args.weapon, "model": "G1",
-			"mass_gr": 50, "v0_fps": 1500, "bc_kgm2": 50, "cal_mm": 8.4
-		}
-		pellets = int(vanilla.data.get("projectiles_per_shot", 8))
-		spread  = vanilla.data.get("spread_stand_hip", 3.0)
-		phys = ShotgunFalloff(params, pellets, spread)
-	else:
-		params = {
-			"name": args.weapon, "model": "G1",
-			"mass_gr": 50, "v0_fps": 1500, "bc_kgm2": 50, "cal_mm": 8.4
-		}
-		if vanilla.is_projectile:
-			v0_hu = vanilla.data.get("projectile_launch_speed", 30000)
-			params["v0_fps"] = v0_hu / 12.0
-		phys = RifleFalloff(params)
+	db_entry = WEAPON_DB[args.weapon]
 
-	# 3. Calibrate & Display
-	phys.calibrate(vanilla.data, False)
-	FalloffGUI(vanilla, phys)
+	# 2. Fetch Vanilla Data
+	wf = WeaponFalloff(args.weapon)
+	success = wf.fetch()
+	if not success: print("Proceeding without vanilla comparison...")
+
+	# 3. Initialize Physics Model
+	print(f"Loading Physics for: {db_entry['name']}")
+	if db_entry["type"] == "rifle": model = RifleFalloff(db_entry["params"], **db_entry["spec"])
+	elif db_entry["type"] == "shotgun": model = ShotgunFalloff(db_entry["params"], **db_entry["spec"])
+	else: print("Unknown weapon type."); sys.exit(1)
+
+	# 4. Launch GUI
+	gui = FalloffGUI(wf, model)
