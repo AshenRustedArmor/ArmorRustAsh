@@ -16,10 +16,6 @@ SOURCE_URL = "https://raw.githubusercontent.com/Syampuuh/Titanfall2/master/scrip
 # Params
 PILOT_HP = 100
 
-ARM_HFVEL = 400.0
-ARM_PILOT = 5.0
-ARM_TITAN = 50.0
-
 # Constants
 CONST_FT_M = 0.3048
 CONST_HU_M = 0.01905
@@ -108,9 +104,9 @@ class FalloffCurve:
 		self.name = name
 		self.config = {
 		#	Name			Defl.	Tune?	Min		Max
-			"dmg_scale":	[1.0,	True,	0.001,	1e1],
-			"dmg_pilot":	[1.0,	True,	0.1,	5.0],
-			"dmg_titan":	[1.5,	True,	0.1,	5.0],
+			"dmg_scale":	[5.0,	False,	1e-1,	5e1],
+			"dmg_pilot":	[1.0,	False,	1.0,	5.0],
+			"dmg_titan":	[4.0,	False,	1.0,	5.0],
 		}
 
 	def get(self, key): return self.config.get(key, 0)[0]
@@ -245,8 +241,8 @@ class VanillaFalloff(FalloffCurve):
 			a_dist = self.data.get(f"{a_idx}distance", 0)
 			b_dist = self.data.get(f"{b_idx}distance", 0)
 
-			a_dmg = self.data.get(a_str + "value" + suffix)
-			b_dmg = self.data.get(b_str + "value" + suffix)
+			a_dmg = self.data.get(a_idx + "value" + suffix)
+			b_dmg = self.data.get(b_idx + "value" + suffix)
 
 			# Get interpolation const
 			rngDiff = b_dist - a_dist
@@ -300,11 +296,13 @@ class BallisticFalloff(FalloffCurve):
 		super().__init__(name)
 		self.config.update({
 			# Name			Default		Tune?	Min		Max
-			"arm_const":	[ARM_HFVEL,	True,	0.0,	1e3  ],
-			"arm_pilot":	[ARM_PILOT,	True,	0.0,	1e2  ],
-			"arm_titan":	[ARM_TITAN,	True,	0.0,	5e2	 ],
+			"arm_const":	[2e2,		True,	1.0,	1e3  ],
+			"arm_pilot":	[2e1,		True,	0.0,	5e1  ],
+			"arm_titan":	[5e1,		True,	0.0,	5e2	 ],
 
-			"mass_kg":		[mass_kg,	True,	5e-5,	0.1  ],
+			"mass_kg":		[2.8e-2,	False,	2e-3,	0.1  ],
+			#[mass_kg,	True,	5e-5,	0.1  ],
+
 			"v0_ms":		[v0_ms,		True,	2e2,	3500 ],			
 			"bc_kgm2":		[bc_kgm2,	True,	5e1,	6e2  ],
 
@@ -349,8 +347,8 @@ class BallisticFalloff(FalloffCurve):
 		
 		# Damage
 		damage = dr * pen/self.get("dmg_scale")
-		damage = damage * self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
-
+		damage *= self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
+		
 		return np.maximum(damage, 0.)
 	
 	def bake(self, ref):
@@ -369,14 +367,14 @@ class BallisticFalloff(FalloffCurve):
 
 		# 3. Calculate Physics Damage at those exact points and overwrite values
 		# Pilot
-		baked.data["damage_near_value"] = self.damage_at(d_near, False)
-		baked.data["damage_far_value"]  = self.damage_at(d_far, False)
-		baked.data["damage_very_far_value"] = self.damage_at(d_vfar, False)
+		baked.data["damage_near_value"] = self.damage_at(0.0, False)
+		baked.data["damage_far_value"]  = self.damage_at(d_near, False)
+		baked.data["damage_very_far_value"] = self.damage_at(d_far, False)
 
 		# Titan
-		baked.data["damage_near_value_titanarmor"] = self.damage_at(d_near, True)
-		baked.data["damage_far_value_titanarmor"]  = self.damage_at(d_far, True)
-		baked.data["damage_very_far_value_titanarmor"] = self.damage_at(d_vfar, True)
+		baked.data["damage_near_value_titanarmor"] = self.damage_at(0.0, True)
+		baked.data["damage_far_value_titanarmor"]  = self.damage_at(d_near, True)
+		baked.data["damage_very_far_value_titanarmor"] = self.damage_at(d_far, True)
 
 		return baked
 
@@ -494,7 +492,7 @@ class FalloffGUI:
 
 	def _controls(self):
 		# Identify tunable parameters
-		tunables = [k for k, v in self.physics.config.items() if v[1]]
+		tunables = [k for k, v in self.physics.config.items() if True] #v[1]]
 
 		# Formatting
 		ax_color = 'lightgoldenrodyellow'
