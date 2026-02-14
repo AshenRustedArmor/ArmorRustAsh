@@ -40,60 +40,6 @@ DRAG_TABLES = {
 }
 
 # ===== Functions =====
-def lerp(a, b, t):
-	return 
-
-def solve_itp(fn, tgt, a, b, tol=1., k1=0.2, k2=2.0):
-	targets = np.atleast_1d(targets)
-	a = np.full(targets.shape, float(low))
-	b = np.full(targets.shape, float(high))
-
-	def g(x): return fn(x) - targets
-
-	y_a, y_b = g(a), g(b)
-
-	# Handle cases where target is outside current physics bounds
-	# (e.g. projectile stops before reaching damage_very_far)
-	mask = (y_a * y_b < 0)
-
-	# Constants for ITP logic
-	k1 = 0.2
-	k2 = 2.0
-	n_half = np.ceil(np.log2((b - a) / (2 * tol)))
-
-	for j in range(max_iter):
-		# 1. Interpolation (Regula Falsi)
-		# Avoid division by zero: if y_a == y_b, points are identical
-		denom = y_b - y_a
-		x_f = np.where(np.abs(denom) > 1e-9, (y_b * a - y_a * b) / denom, (a + b) / 2)
-
-		# 2. Truncation
-		x_half = (a + b) / 2
-		r = tol * (2.0 ** (n_half - j))
-		sigma = np.sign(x_half - x_f)
-		delta = np.minimum(k1 * ((b - a) ** k2), np.abs(x_half - x_f))
-		x_t = x_f + sigma * delta
-
-		# 3. Projection
-		x_itp = np.where(np.abs(x_t - x_half) <= r, x_t, x_half - sigma * r)
-
-		# Update Bounds
-		y_itp = g(x_itp)
-
-		# Vectorized update of a and b
-		side = y_itp * y_a > 0
-
-		a = np.where(side, x_itp, a)
-		y_a = np.where(side, y_itp, y_a)
-		
-		b = np.where(~side, x_itp, b)
-		y_b = np.where(~side, y_itp, y_b)
-
-		# Check convergence across the whole vector
-		if np.all((b - a) < 2 * tol): break
-	
-	return (a + b) / 2
-
 def htk_fmt(dmg):
 	if dmg <= 0: return "inf"
 
@@ -279,45 +225,44 @@ class VanillaFalloff(FalloffCurve):
 		self.is_projectile = ("projectile_launch_speed" in self.data)
 
 	def damage_at(self, dist_hu, isHeavyArmor):
+		far_dist = self.data.get("damage_far_distance", 0)
 		suffix = "_titanarmor" if isHeavyArmor else ""
-		dist_hu = np.atleast_1d(dist_hu)
+		has_vfar = self.data.get("damage_very_far_distance") \
+            and self.data.get("damage_very_far_value")
 
-		# interpolation consts
-		a_str, b_str, c_str = "damage_near_", "damage_far_", "damage_far_"
+		def _internal(d):
+			d = np.atleast_1d(d)
 
-		if (self.data.get("damage_very_far_distance") is not None) \
-		  and (self.data.get("damage_very_far_value") is not None):
-			c_str = "damage_very_far_"
+			# interpolation consts
+			a_str, b_str, c_str = "damage_near_", "damage_far_", "damage_far_"
+			if has_vfar: c_str = "damage_very_far_"
 
-		isFar = dist_hu >= self.data.get("damage_far_distance", 0)
+			isFar = d >= self.data.get("damage_far_distance", 0)
 
-		a_idx = np.where(isFar, b_str, a_str)
-		b_idx = np.where(isFar, c_str, b_str)
+			a_idx = b_str if isFar else a_str
+			b_idx = c_str if isFar else b_str
 
-		a_dist = np.array([ self.data.get(f"{s}distance", 0) for s in a_idx ])
-		b_dist = np.array([ self.data.get(f"{s}distance", 0) for s in b_idx ])
+			a_dist = self.data.get(f"{a_idx}distance", 0)
+			b_dist = self.data.get(f"{b_idx}distance", 0)
 
-		a_dmg_ = []
-		for s in a_idx:
-			s_str = f"{str(s)}value{suffix}"
-			x = self.data.get(s_str)
-			a_dmg_.append(x)
+			a_dmg = self.data.get(a_str + "value" + suffix)
+			b_dmg = self.data.get(b_str + "value" + suffix)
 
-		a_dmg = np.array([ self.data.get(f"{str(s)}value{suffix}", 0) for s in a_idx ])
-		b_dmg = np.array([ self.data.get(f"{str(s)}value{suffix}", 0) for s in b_idx ])
+			# Get interpolation const
+			rngDiff = b_dist - a_dist
+
+			t = (d-a_dist)/rngDiff if rngDiff > 0 else 0.0
+			t = np.clip(t, 0.0, 1.0)
+
+			# Get damage
+			out = (1-t)*a_dmg + t*b_dmg
+			return out[0] if out.size == 1 else out
 		
-		# Get interpolation const
-		rngDiff = b_dist - a_dist
-
-		t = np.where(b_dist-a_dist > 0, (dist_hu-a_dist)/rngDiff, 0.)
-		t = np.clip(t, 0.0, 1.0)
-
-		# Get damage
-		a_dmg = self.data.get(a_str + "value" + suffix)
-		b_dmg = self.data.get(b_str + "value" + suffix)
-
-		out = (1-t)*a_dmg + t*b_dmg
-		return out[0] if out.size == 1 else out
+		fn = np.vectorize(_internal, otypes=[float], cache=True)
+		result = fn(dist_hu)
+        
+		if result.size == 1:return float(result)
+		return result
 
 #	Constants
 DMG_PEN   = 0.1
@@ -490,7 +435,7 @@ class ShotgunFalloff(BallisticFalloff):
 
 # ===== Plotting utils =====
 class FalloffGUI:
-	def __init__(self, vanilla, physics, dist_max = 5000, dist_ct = 2):
+	def __init__(self, vanilla, physics, dist_max = 5000, dist_ct = 200):
 		self.vanilla = vanilla; self.physics = physics
 		self.baked = self.physics.bake(self.vanilla)
 
@@ -500,7 +445,7 @@ class FalloffGUI:
 		plt.subplots_adjust(right=0.55, hspace=0.3)
 
 		#	Data
-		self.dists = np.linspace(0, dist_max, dist_ct)
+		self.dists = np.linspace(0, dist_max, dist_ct+1)
 		
 		#	Functions
 		self._funcs()
