@@ -41,8 +41,7 @@ DRAG_TABLES = {
 
 # ===== Functions =====
 def lerp(a, b, t):
-	t = max(min(t, 1), 0)
-	return (1-t)*a + t*b
+	return 
 
 def solve_itp(fn, tgt, a, b, tol=1., k1=0.2, k2=2.0):
 	targets = np.atleast_1d(targets)
@@ -179,20 +178,19 @@ class FalloffCurve:
 		mod_data = data.copy()
 
 		#	Retrieve vanilla values
-		indices = [
-			"damage_near_",
-			"damage_far_",
-			"damage_very_far_",
-		]
+		indices = ["damage_near_"]
+		if data.get("damage_far_distance"): indices.append("damage_far_")
+		if data.get("damage_very_far_distance"): indices.append("damage_very_far_")
 		
 		def _get(suffix, first):
 			vals = [first]
-			vals.append([ data.get(i+suffix) for i in indices ])
-			return np.array(dists, dtype=float)
+			vals.extend([ data.get(i+suffix, 0) for i in indices ])
+			print(f"Vals: {vals}")
+			return np.array(vals, dtype=float)
 
 		dists = _get("distance", 0.0)
-		tgtP = _get("value", data.get("damage_near_value"))
-		tgtT = _get("value", data.get("damage_near_titanarmor"))
+		tgtP  = _get("value", data.get("damage_near_value"))
+		tgtT  = _get("value_titanarmor", data.get("damage_near_value_titanarmor"))
 
 		#	Physics calculation
 		tunable = [k for k, v in self.config.items() if v[1]]
@@ -250,7 +248,9 @@ class VanillaFalloff(FalloffCurve):
 			if resp.status_code != 200:
 				print(f"Error 200: Could not find '{self.name}'. Status {resp.status_code}")
 				return False
+			
 			self.parse(resp.text)
+			self._analyze()
 			return True
 		except Exception as e:
 			print(f"Connection error: {e}")
@@ -267,9 +267,6 @@ class VanillaFalloff(FalloffCurve):
 		for key in self.data.keys():
 			pattern = rf'"{key}"\s*"([^"]+)"'
 			matched = re.search(pattern, clean)
-
-			print(f"{key} matched: {matched}")
-
 			if not matched: continue
 
 			raw = matched.group(1)
@@ -282,28 +279,45 @@ class VanillaFalloff(FalloffCurve):
 		self.is_projectile = ("projectile_launch_speed" in self.data)
 
 	def damage_at(self, dist_hu, isHeavyArmor):
-		# interpolation consts
-		strA, strB, strC = "damage_near_", "damage_far_", "damage_far_"
-
-		vfar = (self.data.get("damage_very_far_distance") is not None) \
-			and (self.data.get("damage_very_far_value") is not None)
-		if vfar: strC = "damage_very_far_"
-
-		if dist_hu >= self.data.get("damage_far_distance", 0):
-			strA, strB = strB, strC
-
-		distA = self.data.get(strA + "distance", 0)
-		distB = self.data.get(strB + "distance", 0)
-		
-		rngDiff = distB - distA
-		t = (dist_hu - distA) / rngDiff if rngDiff > 0 else 0
-        
-		# get damage
 		suffix = "_titanarmor" if isHeavyArmor else ""
-		dmgA = self.data.get(strA + "value" + suffix)
-		dmgB = self.data.get(strB + "value" + suffix)
+		dist_hu = np.atleast_1d(dist_hu)
 
-		return lerp(dmgA, dmgB, t)
+		# interpolation consts
+		a_str, b_str, c_str = "damage_near_", "damage_far_", "damage_far_"
+
+		if (self.data.get("damage_very_far_distance") is not None) \
+		  and (self.data.get("damage_very_far_value") is not None):
+			c_str = "damage_very_far_"
+
+		isFar = dist_hu >= self.data.get("damage_far_distance", 0)
+
+		a_idx = np.where(isFar, b_str, a_str)
+		b_idx = np.where(isFar, c_str, b_str)
+
+		a_dist = np.array([ self.data.get(f"{s}distance", 0) for s in a_idx ])
+		b_dist = np.array([ self.data.get(f"{s}distance", 0) for s in b_idx ])
+
+		a_dmg_ = []
+		for s in a_idx:
+			s_str = f"{str(s)}value{suffix}"
+			x = self.data.get(s_str)
+			a_dmg_.append(x)
+
+		a_dmg = np.array([ self.data.get(f"{str(s)}value{suffix}", 0) for s in a_idx ])
+		b_dmg = np.array([ self.data.get(f"{str(s)}value{suffix}", 0) for s in b_idx ])
+		
+		# Get interpolation const
+		rngDiff = b_dist - a_dist
+
+		t = np.where(b_dist-a_dist > 0, (dist_hu-a_dist)/rngDiff, 0.)
+		t = np.clip(t, 0.0, 1.0)
+
+		# Get damage
+		a_dmg = self.data.get(a_str + "value" + suffix)
+		b_dmg = self.data.get(b_str + "value" + suffix)
+
+		out = (1-t)*a_dmg + t*b_dmg
+		return out[0] if out.size == 1 else out
 
 #	Constants
 DMG_PEN   = 0.1
@@ -390,7 +404,9 @@ class BallisticFalloff(FalloffCurve):
 		
 		# Damage
 		damage = dr * pen/self.get("dmg_scale")
-		return np.maximum(damage.astype(int), 0.)
+		damage = damage * self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
+
+		return np.maximum(damage, 0.)
 	
 	def bake(self, ref):
 		"""
@@ -426,7 +442,7 @@ class RifleFalloff(BallisticFalloff):
 			# Name		Default		Tune?	Min		Max
 			"len_cal":	[len_cal,	True,	1.0,	5.5	 ],
 			"twist":	[twist,		True,	7.0,	24.0 ],
-			"tumble":	[tumble,	True,	0.0,	4.0  ],
+			"tumble":	[tumble,	True,	0.0,	1e1  ],
 		})
 	
 	def _stability(self, v_ms):
@@ -474,7 +490,7 @@ class ShotgunFalloff(BallisticFalloff):
 
 # ===== Plotting utils =====
 class FalloffGUI:
-	def __init__(self, vanilla, physics, dist_max = 5000, dist_ct = 200):
+	def __init__(self, vanilla, physics, dist_max = 5000, dist_ct = 2):
 		self.vanilla = vanilla; self.physics = physics
 		self.baked = self.physics.bake(self.vanilla)
 
