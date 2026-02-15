@@ -127,7 +127,6 @@ class FalloffCurve:
 		def _get(suffix, first):
 			vals = [first]
 			vals.extend([ data.get(i+suffix, 0) for i in indices ])
-			print(f"Vals: {vals}")
 			return np.array(vals, dtype=float)
 
 		dists = _get("distance", 0.0)
@@ -137,7 +136,7 @@ class FalloffCurve:
 		#	Physics calculation
 		tunable = [k for k, v in self.config.items() if v[1]]
 		guess   = [self.config[k][0] for k in tunable]
-		bounds  = [self.config[k][2:4] for k in tunable]
+		bounds  = [tuple(self.config[k][2:4]) for k in tunable]
 
 		def objective(params):
 			for i, k in enumerate(tunable):
@@ -150,7 +149,14 @@ class FalloffCurve:
 					np.sum((predT - tgtT)**2)
 
 		res = minimize(objective, guess, bounds=bounds, method='L-BFGS-B')
-		if res.success: print(f"Calibrated {self.name}: Loss {res.fun:.4f}")
+		
+		res_str = f"Calibration failed for {self.name}: {res.message}"
+		if res.success:
+			res_str = f"Calibrated {self.name}: Loss {res.fun:.4f}"
+			for i, k in enumerate(tunable):
+				self.set(k, res.x[i])
+
+		print(res_str)
 		return res
 
 class VanillaFalloff(FalloffCurve):
@@ -261,9 +267,9 @@ class VanillaFalloff(FalloffCurve):
 		return result
 
 #	Constants
-DMG_PEN   = 0.1
-DMG_PILOT = 1.0
-DMG_TITAN = 2.5
+SZ_PILOT = 0.5
+SZ_TITAN = 3.5
+
 class BallisticFalloff(FalloffCurve):
 	def __init__(self, params):
 		"""
@@ -310,72 +316,94 @@ class BallisticFalloff(FalloffCurve):
 			"cal_mm":		[cal_mm,	True,	3,		30   ],
 		})
 
+	# ====== Model hooks ======
 	def _drag(self, v_ms):
 		mach = v_ms / CONST_MACH
 		table = DRAG_TABLES.get(self.model, DRAG_TABLES["G1"])
 		return np.interp(mach, table[0], table[1])
 
-	def _phys_at(self, dist_hu):
-		#	Initial
-		dist_m = dist_hu * CONST_HU_M
-		v0 = self.get("v0_ms")
-		bc = max(self.get("bc_kgm2"), 1.0)
-		m = self.get("mass_kg")
+	def _area(self, v_ms):
+		r = self.get("cal_mm") * 5e-4
+		return r * r * pi
 
-		#	Final
+	def _prob(self, dist_hu, tgt_rad):
+		return 1.0
+
+	# ====== Model impl ======
+	def _phys_flight(self, dist_hu):
+		#	Muzzle
+		v0		= self.get("v0_ms")
+		
+		#	Impact
 		# Velocity
 		cd0 = self._drag(v0)
-		k0 = cd0 / bc
-		v1 = v0 * np.exp(-k0 * dist_m)
+		k0  = cd0 / np.max(self.get("bc_kgm2"), 1.0)
+		
+		d_m	= dist_hu * CONST_HU_M
+		v_I	= v0 * np.exp(-k0 * d_m)
+		
+		# Energy
+		m	= self.get("mass_kg")
+		e_I	= 0.5 * m * vI * vI
 
-		# Penetration
-		pen = (0.5*m*v1*v1) * self.sd #* dmg_mult
+		#	Return
+		# vel & energy @ impact
+		return v_I, e_I
+	
+	def _phys_impact(self, dist_hu, armor):
+		#	Retrieve projectile data
+		v_I, e_I	= self._phys_flight(dist_hu)
+		a_I			= self._area(v_I)
 
-		# Return phys
-		return v1, pen
+		#	Armor calculation
+		# Scaling to "absorbed energy"
+		a_ref = 4.5e-5 # Roughly the frontal area of 7.62
 
-	def _dmg_scale(self, dist_hu, v_ms, pen, isHeavyArmor):
-		return pen
+		arm_energy	= armor * self.get("arm_const")	
+		arm_geo		= np.where(a_I == 0., 0., np.pow(a_I / a_ref, 0.5))
+		arm_resist	= arm_energy * arm_geo
+		
+		arm_satur	= e_I / np.max(arm_resist, 1.0)
+		arm_trans	= 1.0 / ( 1.0 + np.exp(-10.0 * (arm_satur - 0.85)) )
+		arm_spall	= 1.0 + np.clip((sat_ratio - 1.1) * 5.0, 0.0, 1.0) * 0.2
+		arm_shock	= a_I / a_ref
 
-	def damage_at(self, dist_hu, isHeavyArmor):
-		vel, pen = self._phys_at(dist_hu)
-		pen = self._dmg_scale(dist_hu, vel, pen, isHeavyArmor)
+		return e_I * arm_satur * arm_trans * arm_spall * arm_shock
 
-		# Armor calculation
-		armor = self.get("arm_titan") if isHeavyArmor else self.get("arm_pilot")
-		armor_eff = (armor * self.get("arm_const")) / np.maximum(vel, 1.)
-		dr = 1. / (1. + armor_eff)
+	def _damage_at(self, dist_hu, isHeavyArmor):
+		tgt_armor = self.get("arm_titan") if isHeavyArmor else self.get("arm_pilot")
+		tgt_area  = SZ_TITAN if isHeavyArmor else SZ_PILOT
 
-		# Damage
-		damage = dr * pen/self.get("dmg_scale")
-		damage *= self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
+		pen  = self._phys_impact(dist_hu, tgt_armor)
+		prob = self._prob(dist_hu, tgt_area)
 
-		return np.maximum(damage, 0.)
+		tgt_mod   = self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
+		return pen * prob * tgt_mod
 
 	def bake(self, ref):
 		"""
 		Creates a 'Baked' VanillaFalloff by sampling this physics model
 		at the reference curve's Near/Far/VeryFar distances.
 		"""
-		# 1. Clone the reference (Vanilla) curve to keep distances/structure
+		# Clone reference curve
 		baked = copy.deepcopy(ref)
 		baked.name = f"{self.name}_baked"
 
-		# 2. Get the distances where the game engine samples damage
-		d_near = baked.data.get("damage_near_distance", 0)
-		d_far  = baked.data.get("damage_far_distance", 0)
-		d_vfar = baked.data.get("damage_very_far_distance", 0)
+		# Find optimal breakpoints
+		def func(d): return self.damage_at(d, False)
+		points = solve(func, B=5000, n=3)
 
-		# 3. Calculate Physics Damage at those exact points and overwrite values
-		# Pilot
-		baked.data["damage_near_value"] = self.damage_at(0.0, False)
-		baked.data["damage_far_value"]  = self.damage_at(d_near, False)
-		baked.data["damage_very_far_value"] = self.damage_at(d_far, False)
+		baked.data["damage_near_distance"] = points[0][0]
+		baked.data["damage_far_distance"]  = points[1][0]
+		baked.data["damage_very_far_distance"] = points[2][0]
 
-		# Titan
-		baked.data["damage_near_value_titanarmor"] = self.damage_at(0.0, True)
-		baked.data["damage_far_value_titanarmor"]  = self.damage_at(d_near, True)
-		baked.data["damage_very_far_value_titanarmor"] = self.damage_at(d_far, True)
+		baked.data["damage_near_value"]    = points[0][1]
+		baked.data["damage_far_value"]     = points[1][1]
+		baked.data["damage_very_far_value"]    = points[2][1]
+
+		baked.data["damage_near_value_titanarmor"]     = self.damage_at(points[0][0], True)
+		baked.data["damage_far_value_titanarmor"]      = self.damage_at(points[1][0], True)
+		baked.data["damage_very_far_value_titanarmor"] = self.damage_at(points[2][0], True)
 
 		return baked
 
@@ -396,19 +424,26 @@ class RifleFalloff(BallisticFalloff):
 		t  = self.get("twist")
 
 		v_fps = v_ms / CONST_FT_M
-
-		sg = (30*m)/(t*t*d*d*d*l*(1+l*l)) * np.cbrt(v_fps / 2800)
-		return 1.0/(1.0 + np.exp(10.0 * (sg - 0.95))) 			# Sigmoid to estimate stability
+		mach = v_ms / CONST_MACH
+        
+		sg = (30*m)/(t*t*d*d*d*l*(1+l*l))
+		dip = 0.5 * np.exp(-((mach - 1.0) / 0.15)**2)
+		return np.maximum(sg - dip, 0.1)
+		#1.0/(1.0 + np.exp(10.0 * (sg - 0.95))) # Sigmoid to estimate stability
 
 	def _drag(self, v_ms):
-		cd_base = super()._drag(v_ms)
-		stable = self._stability(v_ms)
-		return cd_base * (1.0 + stable*3.0)
+		cd = super()._drag(v_ms)
+		sg = self._stability(v_ms)
+		stable = np.clip(1.5 - sg, 0.0, 1.0)
+		return cd * (1.0 + stable)
 
-	def _dmg_scale(self, dist_hu, v_ms, pen, isHeavyArmor):
-		stable = self._stability(v_ms)
-		mult = 1.0 + stable*(self.get("tumble") - 1.0)
-		return pen * mult
+	def _area():
+		a_front	= super()._area(v_ms)
+		a_side	= a_front * self.get("len_cal")
+
+		sg		= self._stability(v_ms)
+		yaw		= 1.0 / (1.0 + np.exp(8.0 * (sg - 1.1)))
+		return (1-yaw) * a_front + yaw * a_side
 
 class ShotgunFalloff(BallisticFalloff):
 	def __init__(self, params, pellets, spread):
@@ -417,20 +452,16 @@ class ShotgunFalloff(BallisticFalloff):
 			# Name		Default		Tune?	Min		Max
 			"pellets":	[pellets,	True,	1,		50	],
 			"spread":	[spread,	True, 	0.1,	15.0],
-			"sz_pilot":	[0.5,		False,	0.3,	1.0	],
-			"sz_titan":	[3.5,		False,	2.0,	6.0	],
 		})
-
-	def _dmg_scale(self, dist_hu, vel_ms, pen, isHeavyArmor):
+	
+	def _prob(self, dist_hu, tgt_r=SZ_PILOT):
 		dist_m = np.maximum(dist_hu * CONST_HU_M, 0.1)
 
-		sz_tgt = self.get("sz_titan") if isHeavyArmor else self.get("sz_pilot")
-		r_tgt  = sz_tgt / 2.0
+		sigma_rad = self.get("spread") * np.pi / 360
+		sigma_r = dist_m * np.tan(sigma_rad)
 
-		spread = dist_m * np.tan(np.radians(self.get("spread")))
-		prob_hit = np.clip(np.pow(sz_tgt/spread, 2), 0.0, 1.0)
-
-		return pen * self.get("pellets") * prob_hit
+		prob_hit = 1.0 - np.exp( -(tgt_r**2)/(2 * sigma_r**2) )
+		return prob_hit * self.get("pellets") 
 
 # ===== Plotting utils =====
 class FalloffGUI:
