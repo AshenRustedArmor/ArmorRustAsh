@@ -104,9 +104,9 @@ class FalloffCurve:
 		self.name = name
 		self.config = {
 		#	Name			Defl.	Tune?	Min		Max
-			"dmg_scale":	[5.0,	False,	1e-1,	5e1],
+			"dmg_scale":	[5.0,	True,	1e-1,	1e1],
 			"dmg_pilot":	[1.0,	False,	1.0,	5.0],
-			"dmg_titan":	[4.0,	False,	1.0,	5.0],
+			"dmg_titan":	[3.5,	False,	1.0,	5.0],
 		}
 
 	def get(self, key): return self.config.get(key, 0)[0]
@@ -283,24 +283,25 @@ class BallisticFalloff(FalloffCurve):
 		name = params.get("name", "unknown")
 		self.model = params.get("model", "G1")
 		
-		mass_kg = params["mass_gr"] * CONST_GR_G * 0.001
-		v0_ms = params["v0_fps"] * CONST_FT_M
+		mass_kg = params["mass_kg"] #gr"] * CONST_GR_G * 0.001
+		v0_ms = params["v0_ms"] #fps"] * CONST_FT_M
 
 		bc_kgm2 = params["bc_kgm2"]
 		cal_mm = params["cal_mm"]
 
 		# Sectional density in lbm / sq in
-		self.sd = (params["mass_gr"]/7000.) * (cal_mm/25.4)**-2
+		mass_gr = mass_kg * CONST_GR_G * 1e3
+		self.sd = (mass_gr/7000.) * (cal_mm/25.4)**-2
 
 		#	Superclass
 		super().__init__(name)
 		self.config.update({
 			# Name			Default		Tune?	Min		Max
 			"arm_const":	[2e2,		True,	1.0,	1e3  ],
-			"arm_pilot":	[2e1,		True,	0.0,	5e1  ],
+			"arm_pilot":	[1e1,		True,	0.0,	5e1  ],
 			"arm_titan":	[5e1,		True,	0.0,	5e2	 ],
 
-			"mass_kg":		[2.8e-2,	False,	2e-3,	0.1  ],
+			"mass_kg":		[2.8e-2,	True,	2e-3,	0.1  ],
 			#[mass_kg,	True,	5e-5,	0.1  ],
 
 			"v0_ms":		[v0_ms,		True,	2e2,	3500 ],			
@@ -414,7 +415,7 @@ class ShotgunFalloff(BallisticFalloff):
 		super().__init__(params)
 		self.config.update({
 			# Name		Default		Tune?	Min		Max
-			"pellets":	[pellets,	False,	1,		50	],
+			"pellets":	[pellets,	True,	1,		50	],
 			"spread":	[spread,	True, 	0.1,	15.0],
 			"sz_pilot":	[0.5,		False,	0.3,	1.0	],
 			"sz_titan":	[3.5,		False,	2.0,	6.0	],
@@ -554,33 +555,61 @@ class FalloffGUI:
 
 # ===== Main Execution =====
 if __name__ == "__main__":
+	#	Parsing
 	parser = argparse.ArgumentParser()
 	parser.add_argument("weapon", help="Internal weapon name (e.g. mp_weapon_rspn101)")
+
+	parser.add_argument("--mass_gr",	type=float, help="Bullet mass (grain)")
+	parser.add_argument("--v0_fps",		type=float, help="Muzzle velocity (ft/s)")
+	parser.add_argument("--bc_kgm2",	type=float, help="Ballistic coeff. (kg/m2)")
+	parser.add_argument("--cal_mm",		type=float, help="Caliber (mm)")
+
+	parser.add_argument("--len_cal",	type=float, help="Round length (cal)")
+	parser.add_argument("--twist",		type=float, help="Twist rate/ratio")
+
 	args = parser.parse_args()
 
-	# 1. Fetch Real Data
+	# Fetch Real Data
 	vanilla = VanillaFalloff(args.weapon)
 	if not vanilla.fetch(): sys.exit(1)
 
-	# 2. Derive Class
+	# Setup params
+	params = { "name": args.weapon, "model": "G1" } 
+	if args.mass_gr: 	params.update({"mass_kg":	args.mass_gr * CONST_GR_G * 0.001})
+	if args.v0_fps:		params.update({"v0_ms":		args.v0_fps * CONST_FT_M})
+	if args.bc_kgm2:	params.update({"bc_kgm2":	args.bc_kgm2})
+	if args.cal_mm:		params.update({"cal_mm":	args.cal_mm})
+
+	if args.len_cal:	params.update({"len_cal":	args.len_cal})
+	if args.twist:		params.update({"twist":		args.twist})
+
+
+	config = {
+		"mass_kg":		9.5e-3,
+		"v0_ms":		853.44,			
+		"bc_kgm2":		279,
+		"cal_mm":		7.62,
+	}; config.update(params)
+
+	# Derive Class
 	if vanilla.is_shotgun: 
-		params = {
-			"name": args.weapon, "model": "G1",
-			"mass_gr": 50, "v0_fps": 1500, "bc_kgm2": 50, "cal_mm": 8.4
-		}
 		pellets = int(vanilla.data.get("projectiles_per_shot", 8))
 		spread  = vanilla.data.get("spread_stand_hip", 3.0)
-		phys = ShotgunFalloff(params, pellets, spread)
+		phys = ShotgunFalloff(config, pellets, spread)
 	else:
-		params = {
-			"name": args.weapon, "model": "G1",
-			"mass_gr": 50, "v0_fps": 1500, "bc_kgm2": 50, "cal_mm": 8.4
-		}
 		if vanilla.is_projectile:
 			v0_hu = vanilla.data.get("projectile_launch_speed", 30000)
-			params["v0_fps"] = v0_hu / 12.0
-		phys = RifleFalloff(params)
+			config["v0_ms"] = v0_hu / CONST_HU_M
+		phys = RifleFalloff(config)
 
-	# 3. Calibrate & Display
+	# Apply arguments
+	for k in phys.config.keys():
+		if k not in params: continue
+		#phys.config[k][0] = v
+		phys.config[k][1] = False
+		
+		print(f"Locked {k} (Value: {phys.config[k][0]})")
+
+	# Calibrate & Display
 	phys.calibrate(vanilla.data, False)
 	FalloffGUI(vanilla, phys)
