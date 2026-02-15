@@ -27,8 +27,8 @@ DRAG_TABLES = {
 	"G1": np.array([
 		[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],	# Mach
 		[0.2, 0.2, 0.2, 0.4, 0.5, 0.4, 0.3]		# Cd
-	]),	
-	
+	]),
+
 	"G7": np.array([
 		[0.0, 0.5, 0.8, 1.0, 1.2, 2.0, 5.0],
 		[0.1, 0.1, 0.1, 0.2, 0.3, 0.2, 0.1]
@@ -41,7 +41,7 @@ def htk_fmt(dmg):
 
 	htk = PILOT_HP / dmg
 	if htk < 9.95: return f"{htk:.1f}"[:3]
-	
+
 	base = int(htk)
 	frac = htk - base
 
@@ -53,17 +53,17 @@ def htk_range_text(vanilla, physics, dist_max=5000, dist_inc=100):
 	"""
 	Builds the range meter notation for weapon keyvars.
 	"""
-	
+
 	def htk_range_bar():
 		dist_ct = int(dist_max/dist_inc) + 1
-		
+
 		bufferP = list("-"*dist_ct)
 		bufferT = bufferP
 
 		#	Sample range
 		#dist_rng = np.arange(dist_max, step=dist_inc)
 		#dmgP = fnDmgP(dist_rng); dmgT = fnDmgT(dist_rng)
-	
+
 		for d in [ 0,
 			vanilla.default["damage_near_distance"],
 			vanilla.default["damage_far_distance"],
@@ -89,7 +89,7 @@ def htk_range_text(vanilla, physics, dist_max=5000, dist_inc=100):
 			strDmgT = htk_fmt(dmgT)
 
 		pass
-	
+
 	# Header section
 	header = []
 	header.append(f"//\t\t{vanilla.name}")
@@ -123,7 +123,7 @@ class FalloffCurve:
 		indices = ["damage_near_"]
 		if data.get("damage_far_distance"): indices.append("damage_far_")
 		if data.get("damage_very_far_distance"): indices.append("damage_very_far_")
-		
+
 		def _get(suffix, first):
 			vals = [first]
 			vals.extend([ data.get(i+suffix, 0) for i in indices ])
@@ -138,7 +138,7 @@ class FalloffCurve:
 		tunable = [k for k, v in self.config.items() if v[1]]
 		guess   = [self.config[k][0] for k in tunable]
 		bounds  = [self.config[k][2:4] for k in tunable]
-		
+
 		def objective(params):
 			for i, k in enumerate(tunable):
 				self.set(k, params[i])
@@ -176,7 +176,7 @@ class VanillaFalloff(FalloffCurve):
 
 		self.is_shotgun = False
 		self.is_projectile = False
-	
+
 	def fetch(self):
 		"""
 		Scrapes weapon data from github.
@@ -190,7 +190,7 @@ class VanillaFalloff(FalloffCurve):
 			if resp.status_code != 200:
 				print(f"Error 200: Could not find '{self.name}'. Status {resp.status_code}")
 				return False
-			
+
 			self.parse(resp.text)
 			self._analyze()
 			return True
@@ -253,10 +253,10 @@ class VanillaFalloff(FalloffCurve):
 			# Get damage
 			out = (1-t)*a_dmg + t*b_dmg
 			return out[0] if out.size == 1 else out
-		
+
 		fn = np.vectorize(_internal, otypes=[float], cache=True)
 		result = fn(dist_hu)
-        
+
 		if result.size == 1:return float(result)
 		return result
 
@@ -270,11 +270,11 @@ class BallisticFalloff(FalloffCurve):
 		Create a ballistic model.
 
 		params: {
-			"name":    str, 
+			"name":    str,
 			"model":   str (Ballistic drag model)
 
-			"mass_gr": float (Bullet mass in grains), 
-			"v0_fps":  float (Initial velocity in fps), 
+			"mass_gr": float (Bullet mass in grains),
+			"v0_fps":  float (Initial velocity in fps),
 			"bc_kgm2": float (Ballistic coefficient in kg/m^2),
 
 			"cal_mm":  float (Bullet diameter),
@@ -282,7 +282,7 @@ class BallisticFalloff(FalloffCurve):
 		#	Table retrieval
 		name = params.get("name", "unknown")
 		self.model = params.get("model", "G1")
-		
+
 		mass_kg = params["mass_kg"] #gr"] * CONST_GR_G * 0.001
 		v0_ms = params["v0_ms"] #fps"] * CONST_FT_M
 
@@ -304,7 +304,7 @@ class BallisticFalloff(FalloffCurve):
 			"mass_kg":		[2.8e-2,	True,	2e-3,	0.1  ],
 			#[mass_kg,	True,	5e-5,	0.1  ],
 
-			"v0_ms":		[v0_ms,		True,	2e2,	3500 ],			
+			"v0_ms":		[v0_ms,		True,	2e2,	3500 ],
 			"bc_kgm2":		[bc_kgm2,	True,	5e1,	6e2  ],
 
 			"cal_mm":		[cal_mm,	True,	3,		30   ],
@@ -321,7 +321,7 @@ class BallisticFalloff(FalloffCurve):
 		v0 = self.get("v0_ms")
 		bc = max(self.get("bc_kgm2"), 1.0)
 		m = self.get("mass_kg")
-	
+
 		#	Final
 		# Velocity
 		cd0 = self._drag(v0)
@@ -340,18 +340,18 @@ class BallisticFalloff(FalloffCurve):
 	def damage_at(self, dist_hu, isHeavyArmor):
 		vel, pen = self._phys_at(dist_hu)
 		pen = self._dmg_scale(dist_hu, vel, pen, isHeavyArmor)
-		
+
 		# Armor calculation
 		armor = self.get("arm_titan") if isHeavyArmor else self.get("arm_pilot")
 		armor_eff = (armor * self.get("arm_const")) / np.maximum(vel, 1.)
 		dr = 1. / (1. + armor_eff)
-		
+
 		# Damage
 		damage = dr * pen/self.get("dmg_scale")
 		damage *= self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
-		
+
 		return np.maximum(damage, 0.)
-	
+
 	def bake(self, ref):
 		"""
 		Creates a 'Baked' VanillaFalloff by sampling this physics model
@@ -388,7 +388,7 @@ class RifleFalloff(BallisticFalloff):
 			"twist":	[twist,		True,	7.0,	24.0 ],
 			"tumble":	[tumble,	True,	0.0,	1e1  ],
 		})
-	
+
 	def _stability(self, v_ms):
 		m  = self.get("mass_kg") * 1e3 / CONST_GR_G
 		d  = self.get("cal_mm") * 25.4
@@ -420,7 +420,7 @@ class ShotgunFalloff(BallisticFalloff):
 			"sz_pilot":	[0.5,		False,	0.3,	1.0	],
 			"sz_titan":	[3.5,		False,	2.0,	6.0	],
 		})
-	
+
 	def _dmg_scale(self, dist_hu, vel_ms, pen, isHeavyArmor):
 		dist_m = np.maximum(dist_hu * CONST_HU_M, 0.1)
 
@@ -445,7 +445,7 @@ class FalloffGUI:
 
 		#	Data
 		self.dists = np.linspace(0, dist_max, dist_ct+1)
-		
+
 		#	Functions
 		self._funcs()
 		self._graph()
@@ -487,7 +487,7 @@ class FalloffGUI:
 
 		self.axGameP, = self.ax_p.plot(self.dists, self.fnGameP(self.dists), '-', color='red', alpha=0.8, label='Vanilla')
 		self.axGameT, = self.ax_t.plot(self.dists, self.fnGameT(self.dists), '-', color='blue', alpha=0.8, label='Vanilla')
-		
+
 		self.ax_p.legend()
 		self.ax_t.legend()
 
@@ -500,8 +500,8 @@ class FalloffGUI:
 		start_y = 0.85; spacing = 0.04
 
 		# Print button
-		ax_btn = plt.axes([0.70, 
-			start_y - (len(tunables) * spacing) - 0.05, 
+		ax_btn = plt.axes([0.70,
+			start_y - (len(tunables) * spacing) - 0.05,
 			0.1, 0.04
 		])
 		self.btn = Button(ax_btn, 'Print', hovercolor='0.975')
@@ -518,7 +518,7 @@ class FalloffGUI:
 				ax			=	slider_ax,
 				label		=	key,
 				orientation	=	'horizontal',
-				
+
 				valinit		=	val,
 				valmin		=	v_min,
 				valmax		=	v_max,
@@ -540,11 +540,11 @@ class FalloffGUI:
 
 			self.axIntrP.set_ydata(self.fnIntrP(self.dists))
 			self.axIntrT.set_ydata(self.fnIntrT(self.dists))
-            
+
             # Redraw
 			self.fig.canvas.draw_idle()
 		return update
-	
+
 	def _print(self, event):
 		title = f"\n=== {self.physics.name} ==="
 
@@ -574,7 +574,7 @@ if __name__ == "__main__":
 	if not vanilla.fetch(): sys.exit(1)
 
 	# Setup params
-	params = { "name": args.weapon, "model": "G1" } 
+	params = { "name": args.weapon, "model": "G1" }
 	if args.mass_gr: 	params.update({"mass_kg":	args.mass_gr * CONST_GR_G * 0.001})
 	if args.v0_fps:		params.update({"v0_ms":		args.v0_fps * CONST_FT_M})
 	if args.bc_kgm2:	params.update({"bc_kgm2":	args.bc_kgm2})
@@ -586,13 +586,13 @@ if __name__ == "__main__":
 
 	config = {
 		"mass_kg":		9.5e-3,
-		"v0_ms":		853.44,			
+		"v0_ms":		853.44,
 		"bc_kgm2":		279,
 		"cal_mm":		7.62,
 	}; config.update(params)
 
 	# Derive Class
-	if vanilla.is_shotgun: 
+	if vanilla.is_shotgun:
 		pellets = int(vanilla.data.get("projectiles_per_shot", 8))
 		spread  = vanilla.data.get("spread_stand_hip", 3.0)
 		phys = ShotgunFalloff(config, pellets, spread)
@@ -607,7 +607,7 @@ if __name__ == "__main__":
 		if k not in params: continue
 		#phys.config[k][0] = v
 		phys.config[k][1] = False
-		
+
 		print(f"Locked {k} (Value: {phys.config[k][0]})")
 
 	# Calibrate & Display
