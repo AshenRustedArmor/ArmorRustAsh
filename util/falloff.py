@@ -9,6 +9,8 @@ from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 
+from solver import solve
+
 # ===== Configuration =====
 # Sourcing
 SOURCE_URL = "https://raw.githubusercontent.com/Syampuuh/Titanfall2/master/scripts/weapons/"
@@ -104,7 +106,7 @@ class FalloffCurve:
 		self.name = name
 		self.config = {
 		#	Name			Defl.	Tune?	Min		Max
-			"dmg_scale":	[5.0,	True,	1e-1,	1e1],
+			"dmg_scale":	[4.0,	True,	0.1,	6.0],
 			"dmg_pilot":	[1.0,	False,	1.0,	5.0],
 			"dmg_titan":	[3.5,	False,	1.0,	5.0],
 		}
@@ -145,8 +147,7 @@ class FalloffCurve:
 			predP = self.damage_at(dists, False)
 			predT = self.damage_at(dists, True)
 
-			return	np.sum((predP - tgtP)**2) + \
-					np.sum((predT - tgtT)**2)
+			return np.sum((predP - tgtP)**2) + np.sum((predT - tgtT)**2)
 
 		res = minimize(objective, guess, bounds=bounds, method='L-BFGS-B')
 		
@@ -303,9 +304,9 @@ class BallisticFalloff(FalloffCurve):
 		super().__init__(name)
 		self.config.update({
 			# Name			Default		Tune?	Min		Max
-			"arm_const":	[2e2,		True,	1.0,	1e3  ],
-			"arm_pilot":	[1e1,		True,	0.0,	5e1  ],
-			"arm_titan":	[5e1,		True,	0.0,	5e2	 ],
+			"arm_const":	[1e0,		True,	0.1,	5e2  ],
+			"arm_pilot":	[10.0,		False,	5.0,	5e1  ],
+			"arm_titan":	[15.0,		False,	10.0,	1e2	 ],
 
 			"mass_kg":		[2.8e-2,	True,	2e-3,	0.1  ],
 			#[mass_kg,	True,	5e-5,	0.1  ],
@@ -324,7 +325,7 @@ class BallisticFalloff(FalloffCurve):
 
 	def _area(self, v_ms):
 		r = self.get("cal_mm") * 5e-4
-		return r * r * pi
+		return r * r * np.pi
 
 	def _prob(self, dist_hu, tgt_rad):
 		return 1.0
@@ -332,19 +333,19 @@ class BallisticFalloff(FalloffCurve):
 	# ====== Model impl ======
 	def _phys_flight(self, dist_hu):
 		#	Muzzle
-		v0		= self.get("v0_ms")
-		
+		v0	= self.get("v0_ms")
+	
 		#	Impact
 		# Velocity
 		cd0 = self._drag(v0)
-		k0  = cd0 / np.max(self.get("bc_kgm2"), 1.0)
+		k0  = cd0 / np.maximum(self.get("bc_kgm2"), 1.0)
 		
 		d_m	= dist_hu * CONST_HU_M
 		v_I	= v0 * np.exp(-k0 * d_m)
 		
 		# Energy
 		m	= self.get("mass_kg")
-		e_I	= 0.5 * m * vI * vI
+		e_I	= 0.5 * m * v_I * v_I
 
 		#	Return
 		# vel & energy @ impact
@@ -363,22 +364,22 @@ class BallisticFalloff(FalloffCurve):
 		arm_geo		= np.where(a_I == 0., 0., np.pow(a_I / a_ref, 0.5))
 		arm_resist	= arm_energy * arm_geo
 		
-		arm_satur	= e_I / np.max(arm_resist, 1.0)
+		arm_satur	= e_I / np.maximum(arm_resist, 1.0)
 		arm_trans	= 1.0 / ( 1.0 + np.exp(-10.0 * (arm_satur - 0.85)) )
-		arm_spall	= 1.0 + np.clip((sat_ratio - 1.1) * 5.0, 0.0, 1.0) * 0.2
+		arm_spall	= 1.0 + np.clip((arm_satur - 1.1) * 5.0, 0.0, 1.0) * 0.2
 		arm_shock	= a_I / a_ref
 
 		return e_I * arm_satur * arm_trans * arm_spall * arm_shock
 
-	def _damage_at(self, dist_hu, isHeavyArmor):
+	def damage_at(self, dist_hu, isHeavyArmor):
 		tgt_armor = self.get("arm_titan") if isHeavyArmor else self.get("arm_pilot")
 		tgt_area  = SZ_TITAN if isHeavyArmor else SZ_PILOT
 
 		pen  = self._phys_impact(dist_hu, tgt_armor)
 		prob = self._prob(dist_hu, tgt_area)
 
-		tgt_mod   = self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
-		return pen * prob * tgt_mod
+		tgt_mod	= self.get("dmg_titan") if isHeavyArmor else self.get("dmg_pilot")
+		return pen * prob * tgt_mod * np.pow(10, -self.get("dmg_scale"))
 
 	def bake(self, ref):
 		"""
@@ -391,19 +392,19 @@ class BallisticFalloff(FalloffCurve):
 
 		# Find optimal breakpoints
 		def func(d): return self.damage_at(d, False)
-		points = solve(func, B=5000, n=3)
+		points = solve(func, B=3500, n=3) #[0]; points.extend()
 
-		baked.data["damage_near_distance"] = points[0][0]
-		baked.data["damage_far_distance"]  = points[1][0]
-		baked.data["damage_very_far_distance"] = points[2][0]
+		baked.data["damage_near_distance"]				= points[0]
+		baked.data["damage_far_distance"]				= points[1]
+		baked.data["damage_very_far_distance"]			= points[2]
 
-		baked.data["damage_near_value"]    = points[0][1]
-		baked.data["damage_far_value"]     = points[1][1]
-		baked.data["damage_very_far_value"]    = points[2][1]
+		baked.data["damage_near_value"]					= self.damage_at(0.0, False) #points[0]
+		baked.data["damage_far_value"]					= self.damage_at(points[1], False)
+		baked.data["damage_very_far_value"]				= self.damage_at(points[2], False)
 
-		baked.data["damage_near_value_titanarmor"]     = self.damage_at(points[0][0], True)
-		baked.data["damage_far_value_titanarmor"]      = self.damage_at(points[1][0], True)
-		baked.data["damage_very_far_value_titanarmor"] = self.damage_at(points[2][0], True)
+		baked.data["damage_near_value_titanarmor"]		= self.damage_at(0.0, True) #points[0]
+		baked.data["damage_far_value_titanarmor"]		= self.damage_at(points[1], True)
+		baked.data["damage_very_far_value_titanarmor"]	= self.damage_at(points[2], True)
 
 		return baked
 
@@ -437,7 +438,7 @@ class RifleFalloff(BallisticFalloff):
 		stable = np.clip(1.5 - sg, 0.0, 1.0)
 		return cd * (1.0 + stable)
 
-	def _area():
+	def _area(self, v_ms):
 		a_front	= super()._area(v_ms)
 		a_side	= a_front * self.get("len_cal")
 
@@ -465,7 +466,7 @@ class ShotgunFalloff(BallisticFalloff):
 
 # ===== Plotting utils =====
 class FalloffGUI:
-	def __init__(self, vanilla, physics, dist_max = 5000, dist_ct = 200):
+	def __init__(self, vanilla, physics, dist_ct = 200):
 		self.vanilla = vanilla; self.physics = physics
 		self.baked = self.physics.bake(self.vanilla)
 
@@ -474,8 +475,7 @@ class FalloffGUI:
 		self.fig, (self.ax_p, self.ax_t) = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
 		plt.subplots_adjust(right=0.55, hspace=0.3)
 
-		#	Data
-		self.dists = np.linspace(0, dist_max, dist_ct+1)
+		self.dist_ct = dist_ct
 
 		#	Functions
 		self._funcs()
@@ -506,10 +506,26 @@ class FalloffGUI:
 		self.ax_t.set_ylabel("Damage")
 		self.ax_t.set_xlabel("Distance (hu)")
 
+		# Axes
+		has_vfar = self.vanilla.data.get("damage_very_far_distance") \
+			and self.vanilla.data.get("damage_very_far_value")
+		vfar_str = "damage_very_far_" if has_vfar else "damage_far_"
+		
+		xmax = max( 
+			self.vanilla.data.get(f"{vfar_str}_distance", 5000), 
+			self.baked.data.get(f"{vfar_str}_distance", 5000)
+		)
+		
+		self.ax_p.set_xlim(0, xmax*1.05)
+		self.ax_t.set_xlim(0, xmax*1.05)
+		self.ax_p.set_ylim(0, self.vanilla.data.get("damage_near_value")*1.25)
+		self.ax_t.set_ylim(0, self.vanilla.data.get("damage_near_value_titanarmor")*1.25)
+
 		self.ax_p.grid(True, alpha=0.25)
 		self.ax_t.grid(True, alpha=0.25)
 
 		# Plot
+		self.dists = np.linspace(0, xmax, self.dist_ct+1)
 		self.axPhysP, = self.ax_p.plot(self.dists, self.fnPhysP(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
 		self.axPhysT, = self.ax_t.plot(self.dists, self.fnPhysT(self.dists), ':', color='grey', alpha=0.5, label='Modeled')
 
@@ -577,12 +593,11 @@ class FalloffGUI:
 		return update
 
 	def _print(self, event):
-		title = f"\n=== {self.physics.name} ==="
-
+		title = f"\n"+"="*12+f" {self.baked.name} "+"="*12
 		print(title)
-		for k, v in self.physics.config.items():
-			if v[1]: print(f"'{k}': {v[0]:.4f},")
-		print("="*len(title)+"\n")
+		
+		for k, v in self.baked.data.items():
+			print(f"{k:<32}\t= {v}")
 
 # ===== Main Execution =====
 if __name__ == "__main__":
