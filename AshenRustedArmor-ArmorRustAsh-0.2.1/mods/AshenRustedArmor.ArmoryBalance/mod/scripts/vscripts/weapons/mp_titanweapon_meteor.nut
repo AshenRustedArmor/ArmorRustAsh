@@ -13,10 +13,10 @@ global function OnWeaponNpcPrimaryAttack_Meteor
 
 global function CreateThermiteTrail
 global function CreateThermiteTrailOnMovingGeo
-//global function CreatePhysicsThermiteTrail
 
 global function Scorch_SelfDamageReduction
 global function GetMeteorRadiusDamage
+#endif // #if SERVER
 
 global const PLAYER_METEOR_DAMAGE_TICK = 100.0
 global const PLAYER_METEOR_DAMAGE_TICK_PILOT = 20.0
@@ -28,14 +28,14 @@ global struct MeteorRadiusDamage {
 	float pilotDamage
 	float heavyArmorDamage
 }
-#endif // #if SERVER
+
+//global function CreatePhysicsThermiteTrail
 
 #if CLIENT
 const INDICATOR_IMAGE = $"ui/menu/common/locked_icon"
 #endif
 
 global const SP_THERMITE_DURATION_SCALE = 1.25
-
 
 const METEOR_FX_CHARGED = $"P_wpn_meteor_exp_amp"
 global const METEOR_FX_TRAIL = $"P_wpn_meteor_exp_trail"
@@ -509,7 +509,7 @@ entity function CreateThermiteTrail(
 }
 
 entity function CreateThermiteTrailOnMovingGeo(
-	entity parent, vector origin, vector angles,
+	entity parentGeo, vector origin, vector angles,
 	entity owner, entity inflictor,
 	float killDelay,
 	asset overrideFX = METEOR_FX_TRAIL,
@@ -518,11 +518,11 @@ entity function CreateThermiteTrailOnMovingGeo(
 	Assert( IsValid( owner ) )
 
 	entity mover = CreateScriptMover( origin, angles )
-	mover.SetParent( parent, "", true, 0 )
+	mover.SetParent( parentGeo, "", true, 0 )
 
 	int attachIdx 		= mover.LookupAttachment( "REF" )
 	entity particle 	= StartParticleEffectOnEntityWithPos_ReturnEntity(	//	Used to be StartParticleEffectOnEntity_ReturnEntity
-		parent,
+		parentGeo,
 		GetParticleSystemIndex( overrideFX ),
 		FX_PATTACH_CUSTOMORIGIN_FOLLOW,
 		-1,

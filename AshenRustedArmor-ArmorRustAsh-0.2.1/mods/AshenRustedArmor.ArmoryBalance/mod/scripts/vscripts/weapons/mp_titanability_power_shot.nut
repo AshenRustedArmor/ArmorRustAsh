@@ -1,5 +1,10 @@
+untyped
+
 //		Declarations
+//	Funcs
 global function MpTitanAbilityPowerShot_Init
+
+global function OnWeaponActivate_power_shot
 
 global function OnWeaponPrimaryAttack_power_shot
 #if SERVER
@@ -21,6 +26,17 @@ void function MpTitanAbilityPowerShot_Init() {
 //	 +#+ +#+#+ +#+ +#+        +#+     +#+ +#+        +#+    +#+ +#+  +#+#+#
 //	 #+#+# #+#+#  #+#        #+#     #+# #+#        #+#    #+# #+#   #+#+#
 //	 ###   ###   ########## ###     ### ###         ########  ###    ####
+
+void function OnWeaponActivate_power_shot( entity weapon ) {
+	//		Sanity checks
+	entity owner = weapon.GetWeaponOwner()
+	if( !IsValid(owner) )
+		return
+
+	//		Functionality
+	PredatorCannonData data = GetPredatorCannonData( weapon )
+	data.weaponPowerShot = weapon
+}
 
 int function OnWeaponPrimaryAttack_power_shot( entity weapon, WeaponPrimaryAttackParams attackParams ) {
 	return PlayerOrNPC_FirePowerShot( weapon, attackParams, true )
@@ -60,11 +76,11 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 		return 0
 
 	#if SERVER
+	PredatorCannonData data = GetPredatorCannonData( minigun )
+
 	//		Player functionality
 	//	Force players to commit
-	if( "forceCommit" in minigun.s ) {
-		minigun.s.forceCommit = playerFired
-	} else { minigun.s.forceCommit <- playerFired }
+	data.forceCommit = playerFired
 
 	if ( playerFired ) {
 		owner.SetTitanDisembarkEnabled( false )
@@ -75,28 +91,27 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 	}
 
 	//	Retrieve mods
-	array<string> mods = minigun.GetMods()
-	if( "normalShotMods" in minigun.s ) {
-		minigun.s.normalShotMods = mods
-	} else { minigun.s.normalShotMods <- mods }
+	data.normalShotMods = minigun.GetMods()
+	activeMods = clone data.normalShotMods
 
 	string powerShotName = "PowerShot_LRB_Shot"
-	if ( mods.contains("CQB_ModeSwap") ) {
-		mods.fastremovebyvalue("CQB_ModeSwap")
+	if ( activeMods.contains("CQB_ModeSwap") ) {
+		activeMods.fastremovebyvalue("CQB_ModeSwap")
 		powerShotName = "PowerShot_CQB_Slug"
 
 		//	Not sure what to replace this with
-		if ( mods.contains("fd_longrange_helper") )
-			mods.append("fd_LongRangePowerShot")
-	} else if ( mods.contains("fd_closerange_helper") )
-		mods.append( "fd_CloseRangePowerShot" )
+		if ( activeMods.contains("fd_longrange_helper") )
+			activeMods.append("fd_LongRangePowerShot")
+	} else if ( activeMods.contains("fd_closerange_helper") ) {
+		activeMods.append( "fd_CloseRangePowerShot" )
+	}
 
-	mods.append( "PowerShot_Common" )
-	mods.append( powerShotName )
-	minigun.SetMods( mods )
+	activeMods.append( "PowerShot_Common" )
+	activeMods.append( powerShotName )
+	minigun.SetMods( activeMods )
 
 	//	Cleanup thread
-	thread PowerShotThreadedCleanup( owner, minigun )
+	thread PowerShotThreadedCleanup( owner, minigun, data )
 	#endif
 
 	//	Handle ammo
@@ -112,7 +127,7 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 //	 ###         ########  ###    ####  ########     ###     ########### ########  ###    ####  ########
 
 #if SERVER
-void function PowerShotThreadedCleanup( entity owner, entity weapon ) {
+void function PowerShotThreadedCleanup( entity owner, entity weapon, PredatorCannonData data ) {
 	//		Sanity checks
 	//	Owner validity check
 	if( !IsValid(owner) )
@@ -122,27 +137,19 @@ void function PowerShotThreadedCleanup( entity owner, entity weapon ) {
 	if( !IsValid(weapon) )
 		return
 
-	//	weapon.s table check
-	Assert( "forceCommit" in weapon.s )
-	Assert( "normalShotMods" in weapon.s )
-
-	//		Retrieve info
-	bool forceCommit = expect bool(weapon.s.forceCommit)
-	array<string> mods = expect array<string>(weapon.s.normalShotMods)
-
 	//		Ending functionality
-	OnThreadEnd( function() : ( owner, weapon, forceCommit, mods ) {
+	OnThreadEnd( function() : ( owner, weapon, data ) {
 			//	Clear status
-			if (IsValid(owner) && forceCommit) {
+			if (IsValid(owner) && data.forceCommit) {
 				owner.ClearMeleeDisabled()
 				owner.SetTitanDisembarkEnabled( true )
 			}
 
 			if( IsValid(weapon) ) {
 				weapon.ClearForcedADS()
-				weapon.s.forceCommit = false
+				data.forceCommit = false
 
-				weapon.SetMods(mods)
+				weapon.SetMods(data.normalShotMods)
 			}
 	}	)
 
@@ -152,7 +159,7 @@ void function PowerShotThreadedCleanup( entity owner, entity weapon ) {
 	owner.EndSignal("TitanEjectionStarted")
 
 	weapon.EndSignal( "OnDestroy" )
-    weapon.EndSignal( "PowerShotCleanup" )
+	weapon.EndSignal( "PowerShotCleanup" )
 
 	WaitForever()
 }

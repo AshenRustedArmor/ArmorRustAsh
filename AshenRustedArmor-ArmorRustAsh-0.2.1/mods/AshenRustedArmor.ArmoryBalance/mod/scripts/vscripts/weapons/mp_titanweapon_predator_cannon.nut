@@ -19,10 +19,48 @@ global function OnWeaponNpcPreAttack_titanweapon_predator_cannon
 
 global function IsPredatorCannonActive
 
+global function GetPredatorCannonData
+
 //	Constants
 const asset SPIN_FX_1P = $"P_predator_barrel_blur_FP"
 const asset SPIN_FX_3P = $"P_predator_barrel_blur"
 
+//	Struct
+global struct PredatorCannonData {
+	bool initialized = false
+
+	//	Weapon entities
+	entity weaponPredatorCannon
+	entity weaponPowerShot
+	entity weaponAmmoSwap
+
+	//	Predator Cannon
+	float dmgValue
+	#if SERVER
+	float locking
+	float lockStartTime
+	#endif
+
+	//	Power shot
+	bool forceCommit = false
+	array<string> normalShotMods = []
+
+	//	Ammo swap
+	bool isCQB = false
+	int statusEffectId = -1
+}
+
+PredatorCannonData function GetPredatorCannonData( entity owner ) {
+	if( !("predatorCannonData" in owner.s) ) {
+		PredatorCannonData newData
+		owner.s.predatorCannonData <- newData
+	}
+
+	return expect PredatorCannonData( owner.s.predatorCannonData )
+}
+
+
+//	Initialization
 void function MpTitanWeaponpredatorcannon_Init() {
 	PrecacheParticleSystem( SPIN_FX_1P )
 	PrecacheParticleSystem( SPIN_FX_3P )
@@ -43,26 +81,33 @@ void function MpTitanWeaponpredatorcannon_Init() {
 
 //		Activation/deactivation
 void function OnWeaponActivate_titanweapon_predator_cannon( entity weapon ) {
+	//	Spin FX
 	ManageSpinFX( weapon, false )
 
-	if ( !( "initialized" in weapon.s ) ) {
-		//	Smart ammo init
-		weapon.s.damageValue <- weapon.GetWeaponInfoFileKeyField( "damage_near_value" )
+	//		Sanity checks
+	entity owner = weapon.GetWeaponOwner()
+	if( !IsValid(owner) )
+		return
+
+	//		Functionality
+	PredatorCannonData data = GetPredatorCannonData( weapon )
+	if ( !data.initialized ) {
+		//	Weapon entities
+		data.weaponPredatorCannon = weapon
+
+		//	Smart ammo
+		data.dmgValue = weapon.GetWeaponInfoFileKeyField( "damage_near_value" )
 		SmartAmmo_SetAllowUnlockedFiring( weapon, true )
 		SmartAmmo_SetUnlockAfterBurst( weapon, false )
 		SmartAmmo_SetWarningIndicatorDelay( weapon, 9999.0 )
 
-		//	Power shot/ammo swap functionality change
-		weapon.s.forceCommit <- false
-		weapon.s.normalShotMods <- []
-
-		//
-		weapon.s.initialized <- true
+		//	Init
+		data.initialized = true
 	}
 
 	#if SERVER
-	weapon.s.locking = true
-	weapon.s.lockStartTime = Time()
+	data.locking = true
+	data.lockStartTime = Time()
 	#endif
 }
 
@@ -71,7 +116,18 @@ void function OnWeaponDeactivate_titanweapon_predator_cannon( entity weapon ) {
 }
 
 void function OnWeaponOwnerChanged_titanweapon_predator_cannon( entity weapon, WeaponOwnerChangedParams changeParams ) {
+	//	Spin FX
 	ManageSpinFX( weapon, false )
+
+	//	Move data
+	if( !IsValid(changeParams.oldOwner) )
+		return
+
+	if( !IsValid(changeParams.newOwner) )
+		return
+
+	PredatorCannonData data = GetPredatorCannonData( changeParams.oldOwner )
+	changeParams.newOwner.predatorCannonData <- data
 }
 
 //		Zooming
@@ -85,9 +141,21 @@ void function OnWeaponStartZoomOut_titanweapon_predator_cannon( entity weapon ) 
 
 //		Attack handling
 var function OnWeaponPrimaryAttack_titanweapon_predator_cannon( entity weapon, WeaponPrimaryAttackParams attackParams ) {
+	PlayerOrNPC_Fire( weapon, attackParams, true )
 }
 
-int function FireWeaponPlayerAndNPC( entity weapon, WeaponPrimaryAttackParams attackParams, bool playerFired ) {
+#if SERVER
+var function OnWeaponNpcPrimaryAttack_titanweapon_predator_cannon( entity weapon, WeaponPrimaryAttackParams attackParams ) {
+	PlayerOrNPC_Fire( weapon, attackParams, false )
+}
+
+void function OnWeaponNpcPreAttack_titanweapon_predator_cannon( entity weapon ) {
+	entity owner = weapon.GetWeaponOwner()
+	thread PredatorSpinup( owner, weapon )
+}
+#endif
+
+int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackParams, bool playerFired ) {
 	//		Sanity checks
 	//	Owner validity
 	entity owner = weapon.GetWeaponOwner()
@@ -149,7 +217,7 @@ int function FireWeaponPlayerAndNPC( entity weapon, WeaponPrimaryAttackParams at
 		int damageFlags = weapon.GetWeaponDamageFlags()
 		entity bolt = weapon.FireWeaponBolt( attackParams.pos, attackDir, boltSpeed, damageFlags, damageFlags, playerFired, index )
 		if( bolt ) {
-			olt.kv.gravity = -0.1
+			bolt.kv.gravity = -0.1
 			#if SERVER
 			bolt.e.onlyDamageEntitiesOnce = true
 			#endif
@@ -179,18 +247,6 @@ int function FireWeaponPlayerAndNPC( entity weapon, WeaponPrimaryAttackParams at
 	//	Ammo cost
 	return weapon.GetAmmoPerShot()
 }
-
-
-#if SERVER
-var function OnWeaponNpcPrimaryAttack_titanweapon_predator_cannon( entity weapon, WeaponPrimaryAttackParams attackParams ) {
-	OnWeaponPrimaryAttack_titanweapon_predator_cannon( weapon, attackParams )
-}
-
-void function OnWeaponNpcPreAttack_titanweapon_predator_cannon( entity weapon ) {
-	entity owner = weapon.GetWeaponOwner()
-	thread PredatorSpinup( owner, weapon )
-}
-#endif
 
 //	       :::::::::: :::    ::: ::::    :::  :::::::: ::::::::::: ::::::::::: ::::::::  ::::    :::  ::::::::
 //	      :+:        :+:    :+: :+:+:   :+: :+:    :+:    :+:         :+:    :+:    :+: :+:+:   :+: :+:    :+:
@@ -291,11 +347,11 @@ bool function IsPredatorCannonActive( entity owner, bool reqZoom = true ) {
 
 #if SERVER
 void function PredatorSpinup( entity owner, entity weapon ) {
+	//	Sanity checks
 	if ( !IsAlive(owner) )
 		return
 
-
-
+	//	SFX
 	EmitSoundOnEntity( owner, "Weapon_Predator_MotorLoop_3P" )
 	EmitSoundOnEntity( owner, "Weapon_Predator_Windup_3P" )
 
