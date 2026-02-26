@@ -34,16 +34,16 @@ void function OnWeaponActivate_power_shot( entity weapon ) {
 		return
 
 	//		Functionality
-	PredatorCannonData data = GetPredatorCannonData( weapon )
+	PredatorCannonData data = GetPredatorCannonData( owner )
 	data.weaponPowerShot = weapon
 }
 
-int function OnWeaponPrimaryAttack_power_shot( entity weapon, WeaponPrimaryAttackParams attackParams ) {
+var function OnWeaponPrimaryAttack_power_shot( entity weapon, WeaponPrimaryAttackParams attackParams ) {
 	return PlayerOrNPC_FirePowerShot( weapon, attackParams, true )
 }
 
 #if SERVER
-int function OnWeaponNpcPrimaryAttack_power_shot( entity weapon, WeaponPrimaryAttackParams attackParams ) {
+var function OnWeaponNpcPrimaryAttack_power_shot( entity weapon, WeaponPrimaryAttackParams attackParams ) {
 	return PlayerOrNPC_FirePowerShot( weapon, attackParams, false )
 }
 #endif
@@ -55,9 +55,10 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 	if ( owner.ContextAction_IsActive() || (playerFired && owner.PlayerMelee_GetState() != PLAYER_MELEE_STATE_NONE) )
 		return 0
 
+
 	//	Prevent power shot during ammo swap
-	array<entity> weapons = GetPrimaryWeapons( owner )
-	entity minigun = weapons[0]
+	PredatorCannonData data = GetPredatorCannonData( owner )
+	entity minigun = data.weaponPredatorCannon
 	if ( !IsValid( minigun ) || minigun.IsReloading() || owner.e.ammoSwapPlaying == true )
 		return 0
 
@@ -76,12 +77,9 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 		return 0
 
 	#if SERVER
-	PredatorCannonData data = GetPredatorCannonData( minigun )
-
 	//		Player functionality
 	//	Force players to commit
 	data.forceCommit = playerFired
-
 	if ( playerFired ) {
 		owner.SetTitanDisembarkEnabled( false )
 		owner.SetMeleeDisabled()
@@ -92,11 +90,11 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 
 	//	Retrieve mods
 	data.normalShotMods = minigun.GetMods()
-	activeMods = clone data.normalShotMods
+	array<string> activeMods = clone data.normalShotMods
 
 	string powerShotName = "PowerShot_LRB_Shot"
-	if ( activeMods.contains("CQB_ModeSwap") ) {
-		activeMods.fastremovebyvalue("CQB_ModeSwap")
+	if ( activeMods.contains("AmmoSwap_CQB") ) {
+		activeMods.fastremovebyvalue("AmmoSwap_CQB")
 		powerShotName = "PowerShot_CQB_Slug"
 
 		//	Not sure what to replace this with
@@ -111,7 +109,7 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 	minigun.SetMods( activeMods )
 
 	//	Cleanup thread
-	thread PowerShotThreadedCleanup( owner, minigun, data )
+	thread PowerShotThreadedCleanup( owner, minigun )
 	#endif
 
 	//	Handle ammo
@@ -127,7 +125,7 @@ int function PlayerOrNPC_FirePowerShot( entity weapon, WeaponPrimaryAttackParams
 //	 ###         ########  ###    ####  ########     ###     ########### ########  ###    ####  ########
 
 #if SERVER
-void function PowerShotThreadedCleanup( entity owner, entity weapon, PredatorCannonData data ) {
+void function PowerShotThreadedCleanup( entity owner, entity weapon ) { //, PredatorCannonData data ) { //var data )  { //
 	//		Sanity checks
 	//	Owner validity check
 	if( !IsValid(owner) )
@@ -138,6 +136,7 @@ void function PowerShotThreadedCleanup( entity owner, entity weapon, PredatorCan
 		return
 
 	//		Ending functionality
+	PredatorCannonData data = GetPredatorCannonData( owner )
 	OnThreadEnd( function() : ( owner, weapon, data ) {
 			//	Clear status
 			if (IsValid(owner) && data.forceCommit) {

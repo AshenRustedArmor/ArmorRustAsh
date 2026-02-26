@@ -141,8 +141,7 @@ void function OnProjectileCollision_Meteor(
 	if ( !IsValid( owner ) )
 		return
 
-	if ( IsValid( owner ) )
-		thread Proto_MeteorCreatesThermite( projectile, hitEnt )
+	thread Proto_MeteorCreatesThermite( projectile, hitEnt )
 	#endif
 }
 
@@ -154,6 +153,7 @@ void function OnProjectileCollision_Meteor(
 //	  #+#        #+#    #+# #+#   #+#+# #+#    #+#    #+#         #+#    #+#    #+# #+#   #+#+# #+#    #+#
 //	 ###         ########  ###    ####  ########     ###     ########### ########  ###    ####  ########
 
+#if SERVER
 //		Fire creation
 int ANGLE_RANGE = 180
 function Proto_MeteorCreatesThermite( entity projectile, entity hitEnt = null ) {
@@ -204,13 +204,13 @@ function Proto_MeteorCreatesThermite( entity projectile, entity hitEnt = null ) 
 	}
 
 	//	Spawn fires
-	float fireVel = projVel
+	vector fireVel = projVel
 	float fireTime = thermiteLifetimeMax
 	for (int i = 0; i < fireCount+1; i++ ) {
 		//	Spawn fire first, then change variables
 		entity fire = CreatePhysicsThermiteTrail(
-			origin, fireVel, fireTime
-			owner, inflictor, projectile,
+			origin, fireVel, fireTime,
+			owner, inflictor, projectile
 		)
 
 		fire.SetAngles( fireVel )
@@ -226,17 +226,16 @@ function Proto_MeteorCreatesThermite( entity projectile, entity hitEnt = null ) 
 			RandomFloatRange(-ANGLE_RANGE, ANGLE_RANGE)
 		)
 
-		vector fwd = AnglesToForward( trailAngles )
-		vector up = AnglesToUp( trailAngles )
+		vector fwd = AnglesToForward( angles )
+		vector up = AnglesToUp( angles )
 		fireVel = (fwd + up) * fireSpeed + projVel
 	}
 }
 
-
 entity function CreatePhysicsThermiteTrail(
 	vector origin, vector velocity, float killDelay,
 	entity owner, entity inflictor, entity projectile,
-	//	Actually utilizing these nice defaults
+	//	Actually utilizing these nice defaults`
 	asset overrideFX = METEOR_FX_TRAIL,
 	int damageSourceId = eDamageSourceId.mp_titanweapon_meteor_thermite
 ) {
@@ -291,8 +290,6 @@ entity function CreatePhysicsThermiteTrail(
 	return fire
 }
 
-
-#if SERVER
 //		Damage handling
 //	Physics variant
 void function PROTO_PhysicsThermiteCausesDamage(

@@ -282,8 +282,8 @@ WeaponData
 
 	//		NPC usage
 	//	Damage
-	"npc_damage_near_value"   						"52" // need to compensate for NPCs not firing as fast as players (1 shot per
-	"npc_damage_far_value"							"37" // need to compensate for NPCs not firing as fast as players (1 shot per
+	"npc_damage_near_value"   						"52" // need to compensate for NPCs not firing as fast as players (1 shot per frame max)
+	"npc_damage_far_value"							"37" // need to compensate for NPCs not firing as fast as players (1 shot per frame max)
 
 	"npc_damage_near_value_titanarmor"				"150" // need to compensate for NPCs not firing as fast as players (1 shot per frame max)
 	"npc_damage_far_value_titanarmor" 				"108" // need to compensate for NPCs not firing as fast as players (1 shot per frame max)
@@ -532,7 +532,7 @@ WeaponData
 	{	
 		//		Functionality
 		//	Ammo swapping
-		CQB_ModeSwap
+		AmmoSwap_CQB
 		{
 			//		Effects
 			//	Muzzle flash
@@ -655,7 +655,7 @@ WeaponData
 			"rui_crosshair_index"							"1"
 		}
 
-		SmartCore
+		AmmoSwap_Smart
 		{
 
 		}
