@@ -1,0 +1,14 @@
+WeaponData
+{
+	//	Swap things around
+	"hud_icon"											"rui/titan_loadout/tactical/titan_tactical_ammo_swap_inv"
+
+	Mods
+	{
+		AmmoSwap_CQB
+		{
+			"hud_icon"									"rui/titan_loadout/tactical/titan_tactical_ammo_swap"
+			"impact_effect_table" 						"40mm_bullet"
+		}
+	}
+}

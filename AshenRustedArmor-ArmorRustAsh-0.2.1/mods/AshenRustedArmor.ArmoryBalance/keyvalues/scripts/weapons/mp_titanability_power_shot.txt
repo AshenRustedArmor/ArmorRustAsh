@@ -1,0 +1,12 @@
+WeaponData
+{
+	//	Needs this for the new mod names
+	Mods
+	{
+		AmmoSwap_CQB
+		{
+			"hud_icon"									"rui/titan_loadout/ordnance/concussive_shot_long"
+			"impact_effect_table" 						"40mm_bullet"
+		}
+	}
+}
