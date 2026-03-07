@@ -36,13 +36,18 @@ global struct PredatorCannonData {
 	float lockStartTime
 	#endif
 
-	//	Power shot
+	//	Power Shot
 	bool forceCommit = false
 	array<string> normalShotMods = []
 
-	//	Ammo swap
+	//	Ammo Swap
 	bool isCQB = false
-	int statusEffectId = -1
+	int cockpitStatusID = -1
+
+	//	Smart Core
+	int coreStatusID = -1
+	int damageStatusID = -1
+
 }
 
 struct {
@@ -50,20 +55,24 @@ struct {
 } file
 
 PredatorCannonData function GetPredatorCannonData( entity owner ) {
-	//	Retrieve soul
+	//	Retrieve soul / owner
 	entity soul = owner
 	if( owner.IsTitan() && IsValid( owner.GetTitanSoul() ) ) {
 		soul = owner.GetTitanSoul()
 	}
+	owner = soul.GetOwner()
 
 	//	Retrieve data
 	if( !(soul in file.soulData) ) {
+		//	Create new
 		PredatorCannonData newData
 		file.soulData[soul] <- newData
 
 		#if SERVER
-		AddEntityDestroyedCallback( soul, function() : ( soul ) {
-			if( soul in file.soulData ) delete file.soulData[soul]
+		//	Cleanup callout
+		AddEntityDestroyedCallback( soul, function( deadSoul ) : () {
+			expect entity( deadSoul )
+			if( deadSoul in file.soulData ) delete file.soulData[deadSoul]
 		}	)
 		#endif
 	}
@@ -71,11 +80,12 @@ PredatorCannonData function GetPredatorCannonData( entity owner ) {
 	return file.soulData[soul]
 }
 
-
 //	Initialization
 void function MpTitanWeaponpredatorcannon_Init() {
 	PrecacheParticleSystem( SPIN_FX_1P )
 	PrecacheParticleSystem( SPIN_FX_3P )
+
+	RegisterSignal( "PowerShotCleanup" )
 
 	#if SERVER
 	if ( GetCurrentPlaylistVarInt( "aegis_upgrades", 0 ) == 1 )
@@ -103,9 +113,11 @@ void function OnWeaponActivate_titanweapon_predator_cannon( entity weapon ) {
 
 	//		Functionality
 	PredatorCannonData data = GetPredatorCannonData( owner )
-	if ( !data.initialized ) {
-		//	Weapon entities
+	if ( !IsValid( data.weaponPredatorCannon ) ) {
+		//	Index weapons
 		data.weaponPredatorCannon = weapon
+		data.weaponPowerShot = owner.GetOffhandWeapon( OFFHAND_RIGHT )
+		data.weaponAmmoSwap = owner.GetOffhandWeapon( OFFHAND_ANTIRODEO )
 
 		//	Smart ammo
 		data.dmgValue = weapon.GetWeaponSettingInt( eWeaponVar.damage_near_value )
@@ -155,13 +167,8 @@ void function OnWeaponOwnerChanged_titanweapon_predator_cannon( entity weapon, W
 }
 
 //		Zooming
-void function OnWeaponStartZoomIn_titanweapon_predator_cannon( entity weapon ) {
-	ManageSpinFX( weapon, true, false )
-}
-
-void function OnWeaponStartZoomOut_titanweapon_predator_cannon( entity weapon ) {
-	ManageSpinFX( weapon, true, true )
-}
+void function OnWeaponStartZoomIn_titanweapon_predator_cannon( entity weapon ) { ManageSpinFX( weapon, true, false ) }
+void function OnWeaponStartZoomOut_titanweapon_predator_cannon( entity weapon ) { ManageSpinFX( weapon, true, true ) }
 
 //		Attack handling
 var function OnWeaponPrimaryAttack_titanweapon_predator_cannon( entity weapon, WeaponPrimaryAttackParams attackParams ) {
@@ -194,15 +201,19 @@ int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackPa
 	weapon.EmitWeaponNpcSound( LOUD_WEAPON_AI_SOUND_RADIUS_MP, 0.2 )
 
 	//		Normal shot
-	bool isPowerShot = weapon.HasMod( "PowerShot_Common" )
-	if ( !isPowerShot ) {
+	if ( !weapon.HasMod( "PowerShot_Common" ) ) {
 		int damageFlags = weapon.GetWeaponDamageFlags()
 
-		if ( weapon.HasMod( "Smart_Core" ) ) {
+		if ( weapon.HasMod( "AmmoSwap_Smart" ) ) {
 			return SmartAmmo_FireWeapon( weapon, attackParams, damageFlags, damageTypes.largeCaliber | DF_STOPS_TITAN_REGEN )
 		}
 
-		weapon.FireWeaponBullet( attackParams.pos, attackParams.dir, 1, damageFlags )
+		if ( weapon.HasMod( "AmmoSwap_CQB" ) ) {
+			ShotgunBlast( weapon, attackParams.pos, attackParams.dir, 4, damageFlags, 1.0, 10.0 )
+		} else {
+			weapon.FireWeaponBullet( attackParams.pos, attackParams.dir, 1, damageFlags )
+		}
+
 		return weapon.GetAmmoPerShot()
 	}
 
@@ -212,9 +223,7 @@ int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackPa
 	if ( playerFired && IsMultiplayer() ) {
 		owner.Anim_PlayGesture( "ACT_SCRIPT_CUSTOM_ATTACK2", 0.2, 0.2, -1.0 )
 	} else if ( !playerFired ) {
-		string anim = "ACT_RANGE_ATTACK1_SINGLE"
-		if ( owner.IsCrouching() )
-			anim = "ACT_RANGE_ATTACK1_LOW_SINGLE"
+		string anim = owner.IsCrouching() ? "ACT_RANGE_ATTACK1_LOW_SINGLE" : "ACT_RANGE_ATTACK1_SINGLE"
 		owner.Anim_ScriptedPlayActivityByName( anim, true, 0.0 )
 	}
 	#endif
@@ -223,20 +232,26 @@ int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackPa
 	string sfxFire1P = "Weapon_Predator_Powershot_LongRange_1P" //"Weapon_Predator_Powershot_ShortRange_1P"
 	string sfxFire3P = "Weapon_Predator_Powershot_LongRange_1P" //"Weapon_Predator_Powershot_ShortRange_3P"
 
+	//	Get damage flags
+	int damageFlags = weapon.GetWeaponDamageFlags()
 	if( weapon.HasMod("PowerShot_LRB_Shot") ) {
 		//	Pick SFX & mods
 		sfxFire1P = "Weapon_Predator_Powershot_ShortRange_1P"
 		sfxFire3P = "Weapon_Predator_Powershot_ShortRange_3P"
 
+		//	Shot shell
+		if ( weapon.HasMod("fd_CloseRangePowerShot") )
+			damageFlags = damageFlags | DF_SKIPS_DOOMED_STATE
+
+		ShotgunBlast( weapon, attackParams.pos, attackParams.dir, 16, damageFlags, 1.0, 10.0 )
+	}
+
+	if( weapon.HasMod("PowerShot_CQB_Slug") ) {
 		//	Projectile creation check
 		bool makeProj = (IsServer() || weapon.ShouldPredictProjectiles())
-		#if CLIENT
-		makeProj = makeProj && playerFired
-		#endif
-
-		//	Shot shell
+		//makeProj = makeProj && (playerFired || !IsClient())
 		if( makeProj ) {
-			int damageFlags = weapon.GetWeaponDamageFlags()
+			//	Slug shell
 			entity bolt = weapon.FireWeaponBolt( attackParams.pos, attackParams.dir, 10000, damageFlags, damageFlags, playerFired, 0 )
 			if( bolt ) {
 				bolt.kv.gravity = -0.1
@@ -247,22 +262,9 @@ int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackPa
 		}
 	}
 
-	if( weapon.HasMod("PowerShot_CQB_Slug") ) {
-		//	Slug shell
-		int damageFlags = weapon.GetWeaponDamageFlags()
-
-		if ( weapon.HasMod("fd_CloseRangePowerShot") )
-			damageFlags = damageFlags | DF_SKIPS_DOOMED_STATE
-
-		ShotgunBlast( weapon, attackParams.pos, attackParams.dir, 16, damageFlags, 1.0, 10.0 )
-	}
-
 	//	Why??
-	if( playerFired ) {
-		weapon.EmitWeaponSound_1p3p( sfxFire1P, sfxFire3P )
-	} else {
-		EmitSoundAtPosition( TEAM_UNASSIGNED, attackParams.pos, sfxFire3P )
-	}
+	if( playerFired ) { weapon.EmitWeaponSound_1p3p( sfxFire1P, sfxFire3P ) }
+	else { EmitSoundAtPosition( TEAM_UNASSIGNED, attackParams.pos, sfxFire3P ) }
 
 	//	Cleanup
 	weapon.Signal("PowerShotCleanup")

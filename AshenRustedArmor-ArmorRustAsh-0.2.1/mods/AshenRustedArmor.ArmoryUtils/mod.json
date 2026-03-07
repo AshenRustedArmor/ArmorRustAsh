@@ -7,10 +7,18 @@
 	"RequiredOnClient": true,
 
 	"Localisation": [
-		"resource/aa-utils_%language%.txt"
+		//"resource/aa-utils_%language%.txt"
 	],
 
 	"Dependencies": {  },
 
-	"Scripts": [  ]
+	"Scripts": [
+		{
+			"Path": "ara-utils_math.nut",
+			"RunOn": "( CLIENT || SERVER ) && MP"
+		}, {
+			"Path": "ara-utils_misc.nut",
+			"RunOn": "( CLIENT || SERVER ) && MP"
+		}
+	]
 }

@@ -1,14 +1,13 @@
 
 global function MpTitanAbilityAmmoSwap_Init
 
-global function OnWeaponActivate_ammo_swap
 global function OnWeaponOwnerChanged_titanability_ammo_swap
 
 global function OnWeaponPrimaryAttack_ammo_swap
 #if SERVER
 global function OnWeaponNpcPrimaryAttack_ammo_swap
 
-global function AddAmmoStatusEffect
+global function AmmoSwap_SetCockpitColor
 #endif
 
 const asset POWER_SHOT_ICON_CLOSE = $"rui/titan_loadout/ordnance/concussive_shot_short"
@@ -29,25 +28,14 @@ void function MpTitanAbilityAmmoSwap_Init() {
 //	 #+#+# #+#+#  #+#        #+#     #+# #+#        #+#    #+# #+#   #+#+#
 //	 ###   ###   ########## ###     ### ###         ########  ###    ####
 
-void function OnWeaponActivate_ammo_swap( entity weapon ) {
-	//		Sanity checks
-	entity owner = weapon.GetWeaponOwner()
-	if( !IsValid(owner) )
-		return
-
-	//		Functionality
-	PredatorCannonData data = GetPredatorCannonData( owner )
-	data.weaponPowerShot = weapon
-}
-
 void function OnWeaponOwnerChanged_titanability_ammo_swap( entity weapon, WeaponOwnerChangedParams changeParams ) {
 	#if SERVER
 	if ( IsValid( changeParams.newOwner ) && changeParams.newOwner.IsPlayer() ) {
-		SetCockpitColor( changeParams.newOwner, true )
+		AmmoSwap_SetCockpitColor( changeParams.newOwner, true )
 	}
 
 	if ( IsValid( changeParams.oldOwner ) && changeParams.oldOwner.IsPlayer() )
-		SetCockpitColor( changeParams.oldOwner, false)
+		AmmoSwap_SetCockpitColor( changeParams.oldOwner, false)
 
 	if ( IsValid( changeParams.oldOwner ) && !IsValid( changeParams.newOwner ) ) {
 		foreach ( effect in weapon.w.fxHandles ) {
@@ -76,30 +64,30 @@ int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackPa
 	//		Sanity checks
 	//	Owner validity check
 	entity owner = weapon.GetWeaponOwner()
-	if( !IsValid(owner) ) return 0
+	if( !IsValid(owner) ) { return 0; }
+
 
 	//	Minigun validity check
 	PredatorCannonData data = GetPredatorCannonData( owner )
 	entity minigun = data.weaponPredatorCannon
-	if ( !IsValid( minigun ) ) return 0
+	if ( !IsValid( minigun ) ) { return 0 }
 
-	if ( minigun.IsReloading() ) return 0													//	No swap while reloading
-	if ( minigun.HasMod( "PowerShot_Common" ) ) return 0									//	No swap during power shot
+	if ( minigun.IsReloading() ) { return 0 }													//	No swap while reloading
+	if ( minigun.HasMod( "PowerShot_Common" ) ) { return 0 }									//	No swap during power shot
 
-	if ( owner.ContextAction_IsActive() ) return 0											//	Owner animation check?
-	if ( playerFired && owner.PlayerMelee_GetState() != PLAYER_MELEE_STATE_NONE ) return 0	//	No swap during melee
-	if ( !IsPredatorCannonActive( owner, false ) ) return 0									//	Minigun isn't active
+	if ( owner.ContextAction_IsActive() ) { return 0 }											//	Owner animation check?
+	if ( playerFired && owner.PlayerMelee_GetState() != PLAYER_MELEE_STATE_NONE ) { return 0 }	//	No swap during melee
+	if ( !IsPredatorCannonActive( owner, false ) ) { return 0 }									//	Minigun isn't active
 
 	//		Functionality
 	//	Offhand trigger
 	owner.e.ammoSwapPlaying = true
-	if ( playerFired )
-		PlayerUsedOffhand( owner, weapon )
+	if ( playerFired ) { PlayerUsedOffhand( owner, weapon ) }
 
 	//	Switch sounds - why wasn't this done in the keyvars?
 	string switchSFX_1P = SWITCH_SFX_CQB_1P
 	string switchSFX_3P = SWITCH_SFX_CQB_3P
-	if ( minigun.HasMod( "LongRangeAmmo") ) {
+	if ( minigun.HasMod( "AmmoSwap_CQB") ) {
 		switchSFX_1P = SWITCH_SFX_LRB_1P
 		switchSFX_3P = SWITCH_SFX_LRB_1P
 	}
@@ -121,7 +109,7 @@ int function PlayerOrNPC_Fire( entity weapon, WeaponPrimaryAttackParams attackPa
 //	 ###         ########  ###    ####  ########     ###     ########### ########  ###    ####  ########
 
 #if SERVER
-void function SetCockpitColor( entity player, bool add ) {
+void function AmmoSwap_SetCockpitColor( entity player, bool add ) {
 	//		Sanity checks
 	PredatorCannonData data = GetPredatorCannonData( player )
 
@@ -140,19 +128,15 @@ void function SetCockpitColor( entity player, bool add ) {
 			cockpitColor = COCKPIT_COLOR_RED
 		}
 
-		data.statusEffectId = StatusEffect_AddEndless( player, eStatusEffect.cockpitColor, cockpitColor )
-		return
-	}
-
-	//	Remove old color
-	if ( data.statusEffectId != -1 ) {
-		StatusEffect_Stop( player, data.statusEffectId )
-		data.statusEffectId = -1
+		data.cockpitStatusID = StatusEffect_AddEndless( player, eStatusEffect.cockpitColor, cockpitColor )
+	} else {
+		//	Remove old color
+		if ( data.cockpitStatusID != -1 ) {
+			StatusEffect_Stop( player, data.cockpitStatusID )
+			data.cockpitStatusID = -1
+		}
 	}
 }
-
-//	This should be deprecated, but I'm not sure where this is used.
-void function AddAmmoStatusEffect( entity player ) { SetCockpitColor( player, true ) }
 
 void function HACK_Delayed_PushForceADS( entity minigun ) {
 	EndSignal( minigun, "OnDestroy" )
@@ -176,8 +160,9 @@ void function ToggleAmmoMods( entity owner ) {
 
 	//	Threading
 	PredatorCannonData data = GetPredatorCannonData( owner )
+	entity minigun = data.weaponPredatorCannon
 
-	data.weaponPredatorCannon.EndSignal( "OnDestroy" )
+	minigun.EndSignal( "OnDestroy" )
 
 	owner.EndSignal( "OnDeath" )
 	owner.EndSignal( "OnDestroy" )
@@ -186,34 +171,36 @@ void function ToggleAmmoMods( entity owner ) {
 	owner.EndSignal( "SettingsChanged")
 
 
-	OnThreadEnd( function() : ( owner, data ) {
+	OnThreadEnd( function() : ( owner, data, minigun ) {
 			owner.e.ammoSwapPlaying = false
 
 			#if SERVER
 			data.isCQB = !data.isCQB
 
 			//	Set minigun mods
-			entity minigun = data.weaponPredatorCannon
+			printt("[ArmoryBalance] ToggleAmmoMods: IsValid(weaponPredatorCannon) = " + IsValid(minigun))
 			if( IsValid(minigun)) {
 				if( minigun.HasMod("PowerShot_Common") )
-					return
+					return	//	Defensive fix
 
-				SetModState( minigun, "AmmoSwap_CQB", data.isCQB )
+				ArmoryUtil_SetModState( minigun, "AmmoSwap_CQB", data.isCQB )
 			}
 
 			entity ammoSwap = data.weaponAmmoSwap
+			printt("[ArmoryBalance] ToggleAmmoMods: IsValid(weaponAmmoSwap) = " + IsValid(ammoSwap))
 			if( IsValid(ammoSwap) ) {
-				SetModState( ammoSwap, "AmmoSwap_CQB", data.isCQB )
+				ArmoryUtil_SetModState( ammoSwap, "AmmoSwap_CQB", data.isCQB )
 			}
 
 			entity powerShot = data.weaponPowerShot
+			printt( "[ArmoryBalance] ToggleAmmoMods: IsValid(weaponPowerShot) = " + IsValid(powerShot))
 			if( IsValid(powerShot) ) {
-				SetModState( powerShot, "AmmoSwap_CQB", data.isCQB )
+				ArmoryUtil_SetModState( powerShot, "AmmoSwap_CQB", data.isCQB )
 			}
 
 			//	Update UI
 			if ( owner.IsPlayer() ) {
-				SetCockpitColor( owner, true )
+				AmmoSwap_SetCockpitColor( owner, data.isCQB )
 				owner.ClearMeleeDisabled()
 			}
 			#endif
@@ -225,26 +212,5 @@ void function ToggleAmmoMods( entity owner ) {
 		float animDuration = viewModel.GetSequenceDuration( "ammo_swap_seq" )
 
 		wait animDuration
-	}
-}
-
-void function SetModState( entity weapon, string modName, bool applyMod ) {
-	//		Sanity checks
-	if( !IsValid( weapon ) )
-		return
-
-	if( modName == "" )
-		return
-
-	//	Functionality
-	array <string> mods = weapon.GetMods()
-	bool hasMod = mods.contains( modName )
-
-	if( applyMod && !hasMod ) {
-		mods.append( modName )
-		weapon.SetMods( mods )
-	} else if ( !applyMod && hasMod ) {
-		mods.fastremovebyvalue( modName )
-		weapon.SetMods( mods )
 	}
 }

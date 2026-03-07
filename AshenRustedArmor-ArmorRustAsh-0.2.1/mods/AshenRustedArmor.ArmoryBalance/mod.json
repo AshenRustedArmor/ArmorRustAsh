@@ -10,7 +10,9 @@
 		"resource/aa-balance_%language%.txt"
 	],
 
-	"Dependencies": {  },
+	"Dependencies": {
+		"ARMORY_UTILS" : "AshenRustedArmor.ArmoryUtils"
+	},
 
 	"Scripts": [ ]
 }

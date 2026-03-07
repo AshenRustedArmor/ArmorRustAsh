@@ -155,7 +155,7 @@ void function OnProjectileCollision_Meteor(
 
 #if SERVER
 //		Fire creation
-int ANGLE_RANGE = 180
+int ANGLE_RANGE = 360
 function Proto_MeteorCreatesThermite( entity projectile, entity hitEnt = null ) {
 	//	Get owner
 	entity owner = projectile.GetOwner()
@@ -213,7 +213,7 @@ function Proto_MeteorCreatesThermite( entity projectile, entity hitEnt = null ) 
 			owner, inflictor, projectile
 		)
 
-		fire.SetAngles( fireVel )
+		fire.SetAngles( angles )
 
 		//	First ent stick
 		if ( i == 0 && hitEnt != null && hitEnt.IsWorld() )
@@ -228,7 +228,7 @@ function Proto_MeteorCreatesThermite( entity projectile, entity hitEnt = null ) 
 
 		vector fwd = AnglesToForward( angles )
 		vector up = AnglesToUp( angles )
-		fireVel = (fwd + up) * fireSpeed + projVel
+		fireVel = projVel + (fwd + up) * fireSpeed
 	}
 }
 
@@ -261,9 +261,7 @@ entity function CreatePhysicsThermiteTrail(
 	//	Physics
 	fire.kv.CollisionGroup = TRACE_COLLISION_GROUP_DEBRIS
 	fire.kv.spawnflags = 4 /* SF_PHYSPROP_DEBRIS */
-
 	fire.SetOrigin( origin )
-	fire.SetVelocity( velocity )
 
 	DispatchSpawn( fire )
 
@@ -278,6 +276,8 @@ entity function CreatePhysicsThermiteTrail(
 	fire.e.fxArray.append( fx )
 	AddActiveThermiteBurn( fx )
 
+	fire.SetVelocity( velocity )
+
 	//	Kill delay
 	if( killDelay > 0 ) { EntFireByHandle( fire, "Kill", "", killDelay, null, null ) }
 
@@ -291,23 +291,67 @@ entity function CreatePhysicsThermiteTrail(
 }
 
 //		Damage handling
+void function FireDamageTick(
+	entity trail, entity owner, entity inflictor,
+	float radius, float delay,
+	int damageSourceId = eDamageSourceId.mp_titanweapon_meteor_thermite
+) {
+	//		Sanity checks
+
+
+	//		Functionality
+	//	Data retrieval
+	float tickDmg_pilot = PLAYER_METEOR_DAMAGE_TICK_PILOT
+	float tickDmg_titan = PLAYER_METEOR_DAMAGE_TICK
+	if ( owner.IsNPC() ) {
+		tickDamage_pilot = NPC_METEOR_DAMAGE_TICK_PILOT
+		tickDamage_titan = NPC_METEOR_DAMAGE_TICK
+	}
+
+	//	Signaling
+	trail.EndSignal( "OnDestroy" )
+	owner.EndSignal( "OnDestroy" )
+	inflictor.EndSignal( "OnDestroy" )
+
+	OnThreadEnd( function() : ( trail ) {
+			array<entity> fxArray
+			if( fxArray in trail.e ) { fxArray.extend( trail.e.fxArray ) }
+			fxArray.append( trail )
+
+			foreach( fx in trail.e.fxArray ) {
+				if( !IsValid( fx ) ) continue
+				EffectStop( fx )
+			}
+	}	)
+
+	//	Thread
+	wait delay
+
+
+}
+
 //	Physics variant
 void function PROTO_PhysicsThermiteCausesDamage(
 	entity trail, entity inflictor,
 	int damageSourceId = eDamageSourceId.mp_titanweapon_meteor_thermite
 ) {
+	//	Owner validity check
 	entity owner = trail.GetOwner()
 	Assert( IsValid( owner ) )
 
+	//	Data retrieval
+	float tickDmg_pilot = PLAYER_METEOR_DAMAGE_TICK_PILOT
+	float tickDmg_titan = PLAYER_METEOR_DAMAGE_TICK
+	if ( owner.IsNPC() ) {
+		tickDamage_pilot = NPC_METEOR_DAMAGE_TICK_PILOT
+		tickDamage_titan = NPC_METEOR_DAMAGE_TICK
+	}
+
+	//	Signaling
 	trail.EndSignal( "OnDestroy" )
 	owner.EndSignal( "OnDestroy" )
 
-	MeteorRadiusDamage meteorRadiusDamage = GetMeteorRadiusDamage( owner )
-	float METEOR_DAMAGE_TICK_PILOT = meteorRadiusDamage.pilotDamage
-	float METEOR_DAMAGE_TICK = meteorRadiusDamage.heavyArmorDamage
-
 	array<entity> fxArray = trail.e.fxArray
-
 	OnThreadEnd( function() : ( fxArray ) {
 			foreach ( fx in fxArray ) {
 				if ( IsValid( fx ) )
@@ -315,6 +359,7 @@ void function PROTO_PhysicsThermiteCausesDamage(
 			}
 	}	)
 
+	//	Thread
 	wait 0.2 // thermite falls and ignites
 
 	vector currOrigin = trail.GetOrigin()
@@ -328,18 +373,18 @@ void function PROTO_PhysicsThermiteCausesDamage(
 		float dist = max( METEOR_THERMITE_DAMAGE_RADIUS_DEF, moveDist )
 
 		RadiusDamage(
-			trail.GetOrigin(),									// origin
-			owner,												// owner
-			inflictor,		 									// inflictor
-			METEOR_DAMAGE_TICK_PILOT,							// pilot damage
-			METEOR_DAMAGE_TICK,									// heavy armor damage
-			dist,												// inner radius
-			dist,												// outer radius
-			SF_ENVEXPLOSION_NO_NPC_SOUND_EVENT,					// explosion flags
-			0, 													// distanceFromAttacker
-			0, 													// explosionForce
-			0,													// damage flags
-			damageSourceId 										// damage source id
+			trail.GetOrigin(),						// origin
+			owner,									// owner
+			inflictor,		 						// inflictor
+			tickDmg_pilot,							// pilot damage
+			tickDmg_titan,							// heavy armor damage
+			dist,									// inner radius
+			dist,									// outer radius
+			SF_ENVEXPLOSION_NO_NPC_SOUND_EVENT,		// explosion flags
+			0, 										// distanceFromAttacker
+			0, 										// explosionForce
+			0,										// damage flags
+			damageSourceId 							// damage source id
 		)
 
 		WaitFrame()
@@ -353,36 +398,44 @@ void function PROTO_ThermiteCausesDamage(
 ) {
 	Assert( IsValid( owner ) )
 
-	trail.EndSignal( "OnDestroy" )
-	owner.EndSignal( "OnDestroy" )
-	inflictor.EndSignal( "OnDestroy" )
-
-	MeteorRadiusDamage meteorRadiusDamage = GetMeteorRadiusDamage( owner )
-	float METEOR_DAMAGE_TICK_PILOT = meteorRadiusDamage.pilotDamage
-	float METEOR_DAMAGE_TICK = meteorRadiusDamage.heavyArmorDamage
-
-	OnThreadEnd( function() : ( trail ) {
-			EffectStop( trail )
-	} )
+	//	Data retrieval
+	float tickDmg_pilot = PLAYER_METEOR_DAMAGE_TICK_PILOT
+	float tickDmg_titan = PLAYER_METEOR_DAMAGE_TICK
+	if ( owner.IsNPC() ) {
+		tickDamage_pilot = NPC_METEOR_DAMAGE_TICK_PILOT
+		tickDamage_titan = NPC_METEOR_DAMAGE_TICK
+	}
 
 	float radius = METEOR_THERMITE_DAMAGE_RADIUS_DEF
 	if ( damageSourceId == eDamageSourceId.mp_titanweapon_flame_wall )
 		radius = FLAME_WALL_DAMAGE_RADIUS_DEF
 
+
+	//	Signaling
+	trail.EndSignal( "OnDestroy" )
+	owner.EndSignal( "OnDestroy" )
+	inflictor.EndSignal( "OnDestroy" )
+
+	OnThreadEnd( function() : ( trail ) {
+			EffectStop( trail )
+	} )
+
+
+	//	Thread
 	for ( ;; ) {
 		RadiusDamage(
-			trail.GetOrigin(),									// origin
-			owner,												// owner
-			inflictor,		 									// inflictor
-			METEOR_DAMAGE_TICK_PILOT,							// pilot damage
-			METEOR_DAMAGE_TICK,									// heavy armor damage
-			radius,												// inner radius
-			radius,												// outer radius
-			SF_ENVEXPLOSION_NO_NPC_SOUND_EVENT,					// explosion flags
-			0, 													// distanceFromAttacker
-			0, 													// explosionForce
-			DF_EXPLOSION,										// damage flags
-			damageSourceId										// damage source id
+			trail.GetOrigin(),					// origin
+			owner,								// owner
+			inflictor,							// inflictor
+			tickDmg_pilot,						// pilot damage
+			tickDmg_titan,						// heavy armor damage
+			radius,								// inner radius
+			radius,								// outer radius
+			SF_ENVEXPLOSION_NO_NPC_SOUND_EVENT,	// explosion flags
+			0, 									// distanceFromAttacker
+			0, 									// explosionForce
+			DF_EXPLOSION,						// damage flags
+			damageSourceId						// damage source id
 		)
 
 		WaitFrame()
@@ -416,10 +469,10 @@ const float SELFDAMAGE_SCALE_SP = 0.00
 const float SELFDAMAGE_SCALE_DEF = 0.00
 const float SELFDAMAGE_SCALE_MOD = 0.00
 
-const float MOD_SPEED_BOOST = 0.20
+const float MOD_SPEED_BOOST = 0.10
 const float MOD_DAMAGE_REDUCTION = 0.15
-const float MOD_EFFECT_TIME = 0.1
-const float MOD_EFFECT_FADE_TIME = 0.0
+const float MOD_EFFECT_TIME = 0.2
+const float MOD_EFFECT_FADE_TIME = 0.3
 
 void function Scorch_SelfDamageReduction( entity target, var damageInfo ) {
 	//	Sanity checks
@@ -447,9 +500,14 @@ void function Scorch_SelfDamageReduction( entity target, var damageInfo ) {
 	if( SoulHasPassive( soul, ePassives.PAS_SCORCH_SELFDMG ) ) {
 		scale = SELFDAMAGE_SCALE_MOD
 
+		print("[ArmoryBalance] mp_titanweapon_meteor: Added status effects")
+
 		//	Add effects
 		int speedStatusID = StatusEffect_AddTimed( soul, eStatusEffect.speed_boost, MOD_SPEED_BOOST, MOD_EFFECT_TIME, MOD_EFFECT_FADE_TIME )
 		int damageStatusID = StatusEffect_AddTimed( soul, eStatusEffect.damage_reduction, MOD_DAMAGE_REDUCTION, MOD_EFFECT_TIME, MOD_EFFECT_FADE_TIME )
+
+		// TODO Add UI/visual effects
+		int cockpitStatusID = StatusEffect_AddTimed( soul, eStatusEffect.cockpitColor, COCKPIT_COLOR_YELLOW, MOD_EFFECT_TIME, MOD_EFFECT_FADE_TIME )
 	}
 
 	//	Scale damage
