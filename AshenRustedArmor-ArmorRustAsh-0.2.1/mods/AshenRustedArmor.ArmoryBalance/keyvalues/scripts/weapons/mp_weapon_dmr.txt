@@ -41,4 +41,18 @@ WeaponData
 	//	Decay/delay
 	"spread_decay_rate"   							"20.0"	// N/A
 	"spread_decay_delay"  							"0.15"	// N/A
+
+	//		Crosshair
+	RUI_CrosshairData
+	{
+		Crosshair_1
+		{
+			"ui"						"ui/crosshair_wingman_n"
+			"base_spread"				"0.0"
+			Args
+			{
+				isFiring				weapon_is_firing
+			}
+		}
+	}
 }
