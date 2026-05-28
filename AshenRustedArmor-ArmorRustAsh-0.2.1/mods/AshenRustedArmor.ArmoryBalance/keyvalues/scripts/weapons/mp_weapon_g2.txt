@@ -1,0 +1,35 @@
+//		TODO
+//	Reduce hipfire spread
+
+WeaponData
+{
+    //		Spread
+	//	Standing
+	"spread_stand_hip"								""	//	"5.5"
+	"spread_stand_ads"								"0"	//	: "0.1"
+
+	"spread_kick_on_fire_stand_hip"   				""	//	"0.7"
+	"spread_kick_on_fire_stand_ads"   				"0"	//	"0.075"
+	
+	//	Standing - penalties
+	"spread_stand_hip_run"							""	//	"8.0"
+	"spread_stand_hip_sprint"                       ""	//	"11.0"
+	
+	//	Crouching
+	"spread_crouch_hip"   							""	//	"4.5"
+	"spread_crouch_ads"   							"0"	//	"0.0" : "0.05"
+
+	"spread_kick_on_fire_crouch_hip"  				""	//	"0.6"
+	"spread_kick_on_fire_crouch_ads"  				"0"	//	"0.05"
+
+	//	Airborne
+	"spread_air_hip"  								""	//	"11.0"
+	"spread_air_ads"  								"0"	//	"0.0" : "0.5"
+
+	"spread_kick_on_fire_air_hip" 					""	//	"0.7"	
+	"spread_kick_on_fire_air_ads" 					"0"	//	"0.15"
+
+	//	Decay/delay
+	"spread_decay_rate"   							""	//	"3.0"
+	"spread_decay_delay"  							""	//	"0.1"
+}
