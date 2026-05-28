@@ -5,31 +5,54 @@ WeaponData
 {
     //		Spread
 	//	Standing
-	"spread_stand_hip"								""	//	"5.5"
-	"spread_stand_ads"								"0"	//	: "0.1"
+	"spread_stand_hip"								"1.08"	//"2.0"
+	"spread_stand_ads"								"0.91"	//"0.4" : "0.25"
 
-	"spread_kick_on_fire_stand_hip"   				""	//	"0.7"
-	"spread_kick_on_fire_stand_ads"   				"0"	//	"0.075"
+	"spread_kick_on_fire_stand_hip"   				"0.7"	//"0.0"
+	"spread_max_kick_stand_hip"   					"0.14"	//"0.0"
+
+	"spread_kick_on_fire_stand_ads"   				"0.0"
+	"spread_max_kick_stand_ads"   					"0.0"
 	
 	//	Standing - penalties
-	"spread_stand_hip_run"							""	//	"8.0"
-	"spread_stand_hip_sprint"                       ""	//	"11.0"
+	"spread_stand_hip_run"							"0.0"	//"2.0"
+	"spread_stand_hip_sprint"                       "0.0"	//"2.0"
 	
 	//	Crouching
-	"spread_crouch_hip"   							""	//	"4.5"
-	"spread_crouch_ads"   							"0"	//	"0.0" : "0.05"
+	"spread_crouch_hip"   							"1.02"	//"2.0"
+	"spread_crouch_ads"   							"0.76"	//"0.2"
 
-	"spread_kick_on_fire_crouch_hip"  				""	//	"0.6"
-	"spread_kick_on_fire_crouch_ads"  				"0"	//	"0.05"
+	"spread_kick_on_fire_crouch_hip"  				"0.04"	//"0.0"
+	"spread_max_kick_crouch_hip"   					"0.12"	//"0.0"
+
+	"spread_kick_on_fire_crouch_ads"  				"0.0"
+	"spread_max_kick_crouch_ads"   					"0.0"
 
 	//	Airborne
-	"spread_air_hip"  								""	//	"11.0"
-	"spread_air_ads"  								"0"	//	"0.0" : "0.5"
+	"spread_air_hip"  								"1.15"	//"5.0"
+	"spread_air_ads"  								"1.0"	//"0.5"
 
-	"spread_kick_on_fire_air_hip" 					""	//	"0.7"	
-	"spread_kick_on_fire_air_ads" 					"0"	//	"0.15"
+	"spread_kick_on_fire_air_hip" 					"0.08"	//"0.0"	
+	"spread_max_kick_air_hip"   					"0.16"	//"0.0"
+
+	"spread_kick_on_fire_air_ads" 					"0.0"
+	"spread_max_kick_air_ads"   					"0.0"
 
 	//	Decay/delay
-	"spread_decay_rate"   							""	//	"3.0"
-	"spread_decay_delay"  							""	//	"0.1"
+	"spread_decay_rate"   							"6.0"	//"25.0"
+	"spread_decay_delay"  							"0.2"
+
+	//		Crosshair
+	RUI_CrosshairData
+	{
+		Crosshair_1
+		{
+			"ui"						"ui/crosshair_circle2"
+			"base_spread"				"0.0"
+			Args
+			{
+				isFiring				weapon_is_firing
+			}
+		}
+	}
 }
