@@ -47,7 +47,7 @@ WeaponData
 	{
 		Crosshair_1
 		{
-			"ui"						"ui/crosshair_circle2"
+			"ui"						"ui/crosshair_wingman_n"
 			"base_spread"				"0.0"
 			Args
 			{
