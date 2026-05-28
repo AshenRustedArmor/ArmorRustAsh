@@ -1,4 +1,4 @@
-//		Falloff adjustment
+//		VOLT: Falloff adjustment
 //	Made falloff linear, increasing the range at which far damage is applied.
 //	Significantly reduced long-range damage, slightly reduced range.
 

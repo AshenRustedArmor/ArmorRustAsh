@@ -1,4 +1,4 @@
-//		FLATLINE: Falloff adjustment
+//		DEVOTION: Falloff adjustment
 //	Buffed close-range performance back to pre-nerf levels (it was so fun!)
 //	Significantly decreased very_far performance, curved and cut range.
 

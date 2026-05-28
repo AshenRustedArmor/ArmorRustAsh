@@ -1,8 +1,49 @@
-//		TODO
+//		LONGBOW: todo
 //	Reduce hipfire spread
 
 WeaponData
 {
+	//		Spread
+	//	Standing
+	"spread_stand_hip"								"2.0"	//"8.0"
+	"spread_stand_ads"								"0.05"	//"0.05"
+
+	"spread_kick_on_fire_stand_hip"   				"0.05"	//"0.0"
+	"spread_max_kick_stand_hip"   					"0.05"	//"0.0"
+
+	"spread_kick_on_fire_stand_ads"   				"0.05"	//"0.0"
+	"spread_max_kick_stand_ads"   					"0.05"	//"0.0"
+	
+	//	Standing - penalties
+	"spread_stand_hip_run"							"2.0"	//"10.0"
+	"spread_stand_hip_sprint"                       "2.0"	//"10.0"
+	
+	//	Crouching
+	"spread_crouch_hip"   							"2.0"	//"6.0"
+	"spread_crouch_ads"   							"1.5"	//"0.0"
+
+	"spread_kick_on_fire_crouch_hip"  				"0.05"	//"0.0"
+	"spread_max_kick_crouch_hip"   					"0.05"	//"0.0"
+
+	"spread_kick_on_fire_crouch_ads"  				"0.05"	//"0.0"
+	"spread_max_kick_crouch_ads"   					"0.05"	//"0.0"
+
+	//	Airborne
+	"spread_air_hip"  								"2.0"	//"10.0"
+	"spread_air_ads"  								"1.5"	//"0.15"
+
+	"spread_kick_on_fire_air_hip" 					"0.05"	//"0.0"
+	"spread_max_kick_air_hip"   					"0.05"	//"0.0"
+
+	"spread_kick_on_fire_air_ads" 					"0.05"	//"0.0"
+	"spread_max_kick_air_ads"   					"0.05"	//"0.0"
+
+	//	Decay/delay
+	"spread_decay_rate"   							"20.0"	//"30.0"
+	"spread_decay_delay"  							"0.15"	//"0.15"
+
+
+
     //		Spread
 	//	Standing
 	"spread_stand_hip"								"4.5"

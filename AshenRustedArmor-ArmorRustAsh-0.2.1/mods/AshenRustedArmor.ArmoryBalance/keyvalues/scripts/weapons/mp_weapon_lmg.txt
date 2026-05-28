@@ -1,4 +1,4 @@
-//		Falloff adjustment
+//		SPITFIRE: Falloff adjustment
 //	Decreased range and very_far damage.
 //	Curved falloff, made near range slightly shorter.
 
@@ -6,6 +6,9 @@
 //	============== # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = #
 //	Original HTK: 2.8 ----------------------------- 2.8 - 4.0 --------------- 5.0
 //	Modified HTK: 2.8 ------------------------- 2.8 ----- 4.0  6.3
+
+//	Shot Count
+//	==========
 
 WeaponData
 {
