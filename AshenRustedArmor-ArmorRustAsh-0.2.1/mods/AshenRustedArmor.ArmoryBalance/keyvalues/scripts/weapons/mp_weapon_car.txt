@@ -6,6 +6,9 @@
 //	Original HTK: 4.0 --------------- 4.0 ----- 7.7 ------------------------- 10.
 //	Modified HTK: 4.0 --------------- 4.0 ----- 7.7 - 10.
 
+//		Spread adjustment
+//	
+
 WeaponData
 {
 	//		Damage
@@ -24,4 +27,43 @@ WeaponData
 
 	//   Crosshair
     "red_crosshair_range" 							"1000"
+
+	//		Spread
+	//	Standing
+	"spread_stand_hip"								"2.0"	//"0.0"
+	"spread_stand_ads"								"1.5"	//"0.0"
+
+	"spread_kick_on_fire_stand_hip"   				"0.05"	//"0.0"
+	"spread_max_kick_stand_hip"   					"0.05"	//"0.0"
+
+	"spread_kick_on_fire_stand_ads"   				"0.05"	//"0.0"
+	"spread_max_kick_stand_ads"   					"0.05"	//"0.0"
+	
+	//	Standing - penalties
+	"spread_stand_hip_run"							"2.0"	//"0.0"
+	"spread_stand_hip_sprint"                       "2.0"	//"0.0"
+	
+	//	Crouching
+	"spread_crouch_hip"   							"2.0"	//"0.0"
+	"spread_crouch_ads"   							"1.5"	//"0.0"
+
+	"spread_kick_on_fire_crouch_hip"  				"0.05"	//"0.0"
+	"spread_max_kick_crouch_hip"   					"0.05"	//"0.0"
+
+	"spread_kick_on_fire_crouch_ads"  				"0.05"	//"0.0"
+	"spread_max_kick_crouch_ads"   					"0.05"	//"0.0"
+
+	//	Airborne
+	"spread_air_hip"  								"2.0"	//"1.5"
+	"spread_air_ads"  								"1.5"	//"0.0"
+
+	"spread_kick_on_fire_air_hip" 					"0.05"	//"0.0"
+	"spread_max_kick_air_hip"   					"0.05"	//"0.0"
+
+	"spread_kick_on_fire_air_ads" 					"0.05"	//"0.0"
+	"spread_max_kick_air_ads"   					"0.05"	//"0.0"
+
+	//	Decay/delay
+	"spread_decay_rate"   							"20.0"	//"30.0"
+	"spread_decay_delay"  							"0.15"	//"0.15"
 }

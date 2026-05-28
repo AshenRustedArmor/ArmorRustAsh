@@ -3,7 +3,7 @@
 WeaponAttackWave:
 	Args
 	+	ent:		waveFunc arg, weapon or projectile
-	+	projCt:		waveFunc arg
+	+	projNum:	waveFunc arg
 	+	inflictor:	waveFunc arg
 	+	pos:		ground pos @ start
 	+	dir:		travel direction
@@ -25,14 +25,224 @@ WeaponAttackWave:
 			+	continue
 		+	Upwards trace:
 			+	hits nothing (wall): break
+			+	retrieve movingGeo
+			+	check waveFunc
+			+	advance position
+			+	continue
 
 waveFunc
 	Args
-	+
-	+	movingGeo:	Recievesmoving geometry ent from WeaponAttackWave traces
+	+	proj:		Control point for FX & AI behavior, source of damage information
+	+	projNum:	Projectile ID by number.
+	+	inflictor:	Damage inflictor object,
+	+	movingGeo:	Recieves moving geometry ent from WeaponAttackWave traces
+	+	pos:		Segment position.
+	+	ang:		Segment angles.
+	+	waveNum:	Wave ID by number.
 	Does
-
+	+	Check for valid origin (do nothing)
+	+	Get damage, including mods
+	+	Start FX
 */
+
+table< int, WaveAttackData > WaveAttacks
+struct WaveAttackData {
+	int waveID
+
+	//		Damage-related data
+	entity weapon
+	entity attacker
+	int damageSourceId
+
+	//		Positional data
+	vector origin
+	vector angles
+	float offset
+
+	//		Geometric data
+//	float range		//	Max traversed distance
+//	float speed		//	Traversal speed
+//	float spacing	//	Minimum node-to-node dist
+
+	float stepDist	//	stepDist = range / ceil(range / spacing)
+	float stepTime	//	stepTime = 0.1*max(1, floor(10*stepDist/speed + 0.5))
+
+	float arcAngle	//	Wavefront swept angle (0 for flat)
+	float arcWidth	//	Wavefront width (end-to-end for arcs)
+
+	//		Function references
+	bool functionref( WaveNode, vector, entity ) onWaveNodeCheck
+	void functionref( WaveNode, vector, entity ) onWaveNodeSpawn
+}
+
+struct WaveFrontData {
+	int				count = 0
+	array<bool>		cleanup
+
+	array<int>		waveID
+	array<int>		frontID
+
+	//	Position/location
+	array<vector>	origin
+	array<vector>	direction
+	array<float>	distance
+
+	//	Wave geometry
+	array<float>	boundL
+	array<float>	boundR
+	array<bool>		isArc	//	bounds must be in degrees if arc
+
+	//	Killcams
+	array<entity>	inflictor
+	array<bool>		ownsMover
+
+	//	Timing
+	array<float>	nextTime
+} fronts
+
+const int MAX_TRACE_JOBS = 1024
+struct WaveTraceJobs {
+	int count = 0
+
+	array<int>		waveID	= array<int>	(MAX_TRACE_JOBS, 0)
+	array<int>		frontID	= array<int>	(MAX_TRACE_JOBS, 0)
+	array<bool>		occlude	= array<bool>	(MAX_TRACE_JOBS, false)
+
+	array<float>	offset	= array<float>	(MAX_TRACE_JOBS, 0.)
+	array<vector>	fwdDir	= array<vector>	(MAX_TRACE_JOBS, <0,0,0>)
+
+	array<vector>	oldPos	= array<vector>	(MAX_TRACE_JOBS, <0,0,0>)
+	array<vector>	newPos	= array<vector>	(MAX_TRACE_JOBS, <0,0,0>)
+} jobs
+
+/*	Front Propogation Algorithm
+Description:
+	The list of nodes is recorded as their arclength offsets (regular distance
+	if flat) from the center. Compute the arclength of each curve, working in
+	the modulus of the arclength, offset so zero is at the center. A node steps
+	from its initial position (d_1, x_1) to (d_2, x_1 \pm NodeDist) (half for
+	the first step); we know there will be extra space off to one side, so the
+	algorithm can check the modulo distance between the first and last node and
+	add a node in the center if there's space.
+
+	Simply divide the signed arclength from the center by the current radius or
+	range to get the angle, then take -dir rotated by this angle (or maybe dir
+	rotated by negative angle?) to find the "previous" position.
+
+	Rather than storing the node positions, the algorithm can simply store the
+	occluded positions (if the occlusion range is known). Node positions can be
+	"bricklayed" with each subsequent wavefront, excluding positions within the
+	occlusion range of a recorded obstacle.
+
+Node Placement:
+	Inputs:
+	+	Origin:		vector
+	+	Distance:	float
+	+	Direction:	vector
+	+	Z offset:	float, but pack above
+	+	Bounds:		float[2]
+Angular bounds for arcs is easier to handle, no updating arclength
+
+max range:	offset + range	- multiply by ceil(timestep) / timestep
+timestep:	range / speed	- round to integer number of ticks
+*/
+
+void function WaveECS_IterateFronts( float currTime ) {
+	// ===== 1. Forward Step =====
+	for (int i = 0; i < fronts.count; i++) {
+		//		Sanity checks
+		//	Non-initialized
+		if (fronts.parentID[i] == 0) continue;
+		int parentID = fronts.parentID[i]
+
+		//	Paren't
+		WaveAttackData parent
+		if (!(parentID in WaveAttacks)) {
+			fronts.cleanup[i] = true;
+		} else { parent = WaveAttacks[parentID] }
+
+		//	Should delete
+		if (fronts.cleanup[i]) continue;
+
+		//	Timing
+		float nextTime = fronts.nextTime[i]
+		if (currTime < nextTime) continue;
+		//fronts.nextTime = currTime + parent.stepTime;
+
+		//		Functionality
+		//	Get and clamp bounds
+		float oldDist = fronts.distance[i]
+		float newDist = oldDist + parent.stepDist
+		fronts.distance[i] = newDist
+
+		float boundL = fronts.boundL[i]
+		float boundR = fronts.boundR[i]
+
+		vector bounds = Vector(boundL, boundR, boundR - boundL)
+		if( fronts.isArc[i] ) {
+			bounds *= DEG_TO_RAD
+			bounds *= newDist
+		}
+
+		bounds += <0.5, -0.5, 1> * parent.spacing
+
+		//	Find node positions
+		int nodeCount = floor(bounds.z / parent.spacing) + 1
+		array<float> range = ArmoryUtil_Range( bounds.x, bounds.y, nodeCount ) // TODO rename variable
+
+		vector origin = fronts.origin[i]
+		vector baseDir = fronts.direction[i]
+		vector angles = VectorToAngles( baseDir )
+
+		int jobID = jobs.count
+		frontJobs[ fronts.frontID[i] ] = jobID
+		if( isArc ) {
+			foreach (float r in range) {
+				vector fwd = AnglesToVector(angles + <0, r, 0>)
+
+				jobs.waveID[jobID] = fronts.waveID[i]
+				jobs.frontID[jobID] = fronts.frontID[i]
+				jobs.occlude[jobID] = false
+
+				jobs.offset[jobID] = r
+				jobs.fwdDir[jobID] = fwd
+
+				jobs.oldPos[jobID] = origin + (fwd * oldDist)
+				jobs.newPos[jobID] = origin + (fwd * newDist)
+
+				jobID ++
+			}
+		} else {
+			vector right = CrossProduct( baseDir, <0, 0, 1> )
+			vector oldCenter = baseDir * oldDist
+			vector newCenter = baseDir * newDist
+			foreach (float r in range) {
+				jobs.waveID[jobID] = fronts.waveID[i]
+				jobs.frontID[jobID] = fronts.frontID[i]
+				jobs.occlude[jobID] = false
+
+				jobs.offset[jobID] = r
+				jobs.fwdDir[jobID] = baseDir
+
+				vector offset = right * r
+				jobs.oldPos[jobID] = origin + oldCenter + offset
+				jobs.newPos[jobID] = origin + newCenter + offset
+
+				jobID ++
+			}
+		}
+		jobs.count = jobID
+	}
+
+	// ===== 2. Trace =====
+	for (int i = 0; i < jobs.count; i++) {
+
+	}
+}
+
+
+
+
 
 
 //		   :::     :::     :::     ::::    ::: ::::::::::: :::        :::            :::
@@ -316,12 +526,16 @@ bool function CreateFlameWaveSegment(
 	if( !( waveCount in inflictor.e.waveLinkFXTable ) ) {
 		entity waveEffectLeft = StartParticleEffectInWorld_ReturnEntity( GetParticleSystemIndex( FLAMEWAVE_EFFECT_CONTROL ), pos, angles )
 		entity waveEffectRight = StartParticleEffectInWorld_ReturnEntity( GetParticleSystemIndex( FLAMEWAVE_EFFECT_CONTROL ), pos, angles )
+
 		EntFireByHandle( waveEffectLeft, "Kill", "", 3.0, null, null )
 		EntFireByHandle( waveEffectRight, "Kill", "", 3.0, null, null )
+
 		vector leftOffset = pos + projectile.GetRightVector() * FLAME_WALL_MAX_HEIGHT
 		vector rightOffset = pos + projectile.GetRightVector() * -FLAME_WALL_MAX_HEIGHT
+
 		EffectSetControlPointVector( waveEffectLeft, 1, leftOffset )
 		EffectSetControlPointVector( waveEffectRight, 1, rightOffset )
+
 		array<entity> rowFxArray = [ waveEffectLeft, waveEffectRight ]
 		inflictor.e.waveLinkFXTable[ waveCount ] <- rowFxArray
 	} else {
@@ -345,18 +559,19 @@ bool function CreateFlameWaveSegment(
 
 	// radiusHeight = sqr( FLAME_WALL_MAX_HEIGHT^2 + PROJECTILE_SEPARATION^2 )
 	RadiusDamage(
-			pos,
-			projectile.GetOwner(), //attacker
-			inflictor, //inflictor
-			projectile.GetProjectileWeaponSettingInt( eWeaponVar.damage_near_value ),
-			projectile.GetProjectileWeaponSettingInt( eWeaponVar.damage_near_value_titanarmor ),
-			180, // inner radius
-			180, // outer radius
-			SF_ENVEXPLOSION_NO_DAMAGEOWNER | SF_ENVEXPLOSION_MASK_BRUSHONLY | SF_ENVEXPLOSION_NO_NPC_SOUND_EVENT,
-			0, // distanceFromAttacker
-			0, // explosionForce
-			flags,
-			eDamageSourceId.mp_titancore_flame_wave )
+		pos,
+		projectile.GetOwner(), //attacker
+		inflictor, //inflictor
+		projectile.GetProjectileWeaponSettingInt( eWeaponVar.damage_near_value ),
+		projectile.GetProjectileWeaponSettingInt( eWeaponVar.damage_near_value_titanarmor ),
+		180, // inner radius
+		180, // outer radius
+		SF_ENVEXPLOSION_NO_DAMAGEOWNER | SF_ENVEXPLOSION_MASK_BRUSHONLY | SF_ENVEXPLOSION_NO_NPC_SOUND_EVENT,
+		0, // distanceFromAttacker
+		0, // explosionForce
+		flags,
+		eDamageSourceId.mp_titancore_flame_wave
+	)
 
 	return true
 }
@@ -395,7 +610,8 @@ bool function CreateEmpWaveSegment(
 		0, // distanceFromAttacker
 		0, // explosionForce
 		DF_ELECTRICAL | DF_STOPS_TITAN_REGEN,
-		eDamageSourceId.mp_titanweapon_arc_wave )
+		eDamageSourceId.mp_titanweapon_arc_wave
+	)
 
 	return true
 }

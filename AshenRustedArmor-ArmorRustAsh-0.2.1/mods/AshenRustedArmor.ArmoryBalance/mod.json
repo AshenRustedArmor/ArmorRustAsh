@@ -14,5 +14,11 @@
 		"ARMORY_UTILS" : "AshenRustedArmor.ArmoryUtils"
 	},
 
-	"Scripts": [ ]
+	"Scripts": [
+		{
+			"Path": "weapons/_scorch.nut",
+			"RunOn": "( CLIENT || SERVER ) && MP"
+		},
+		{}
+	]
 }

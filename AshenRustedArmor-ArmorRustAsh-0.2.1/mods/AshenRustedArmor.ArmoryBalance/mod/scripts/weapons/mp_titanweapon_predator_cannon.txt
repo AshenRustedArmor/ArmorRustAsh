@@ -573,7 +573,7 @@ WeaponData
 	"smart_ammo_target_confirming_sound"			"Titan_Legion_Smart_Core_LockingOn_1P"
 	"smart_ammo_target_confirmed_sound"				"Titan_Legion_Smart_Core_Target_Acquired_1P"
 	"smart_ammo_target_lost_sound"					"Titan_Legion_Smart_Core_Unlocked_1P"
-	
+
     //   Weapon Mods
 	Mods
 	{	

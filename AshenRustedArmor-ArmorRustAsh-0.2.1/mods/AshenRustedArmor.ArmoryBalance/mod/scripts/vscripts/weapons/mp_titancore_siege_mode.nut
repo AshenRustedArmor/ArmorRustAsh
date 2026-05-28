@@ -1,3 +1,7 @@
+#if CLIENT
+untyped
+#endif
+
 //		Initialization
 //	Functions
 global function MpTitanAbilitySmartCore_Init
@@ -6,6 +10,12 @@ global function OnWeaponPrimaryAttack_titancore_siege_mode
 
 //	Consts
 const asset SMART_CORE_LASER_SIGHT_FX = $"P_wpn_lasercannon_aim_short"
+
+struct {
+	var smartCoreHud
+	float coreDuration
+	float coreStartTime
+} file
 
 
 //	Init
@@ -66,7 +76,7 @@ var function OnWeaponPrimaryAttack_titancore_siege_mode( entity weapon, WeaponPr
 	//thread SmartCoreThread( weapon, coreDuration )
 	#endif
 
-	thread SmartCoreThread( weapon, coreDuration )
+	thread SmartCoreThread( weapon, owner, coreDuration )
 	OnAbilityStart_TitanCore( weapon )
 	//thread SmartCoreFX( weapon, coreDuration )
 
@@ -86,7 +96,7 @@ void function SmartCoreThread( entity weapon, entity owner, float coreDuration )
 	entity soul = owner.GetTitanSoul()
 
 	PredatorCannonData data = GetPredatorCannonData( owner )
-	entity minigun = expect entity( data.weaponPredatorCannon )
+	entity minigun = data.weaponPredatorCannon
 
 	#if SERVER
 	//	SFX
@@ -128,7 +138,7 @@ void function SmartCoreThread( entity weapon, entity owner, float coreDuration )
 
 				if( owner.IsPlayer() ) {
 					AmmoSwap_SetCockpitColor( owner, true )
-					StatusEffect_Stop( owner, statusEffectSmartCore )
+					StatusEffect_Stop( owner, data.coreStatusID )
 				}
 			}
 
@@ -140,7 +150,7 @@ void function SmartCoreThread( entity weapon, entity owner, float coreDuration )
 
 			if ( IsValid(soul) ) {
 				CleanupCoreEffect(soul)
-				StatusEffect_Stop( soul, statusEffect )
+				StatusEffect_Stop( soul, data.damageStatusID )
 			}
 			#endif
 	}	)
