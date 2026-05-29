@@ -1,6 +1,9 @@
 WeaponData
 {
-	"grenade_ignition_time"							"0.25"	//"0.75"
+	MP
+	{
+		"grenade_ignition_time"							"0.25"	//"0.75"
+	}
 
 	//		Ammo
 	//	Reloading/regen
