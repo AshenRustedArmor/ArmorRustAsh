@@ -107,7 +107,7 @@ void function ArmoryFixes_ThermiteDamage(
 	array<entity> fxArray
 	if( "fxArray" in trail.e ) {
 		fxArray.extend(trail.e.fxArray)
-	} else { fxArray.append(trail) }
+	} else {  } //fxArray.append(trail)
 
 	OnThreadEnd( function() : ( fxArray ) {
 		foreach ( fx in fxArray ) {
@@ -117,7 +117,7 @@ void function ArmoryFixes_ThermiteDamage(
 	})
 
 	//	Thread
-	bool isPhysics = ( trail.GetMoveType() == MOVETYPE_VPHYSICS )
+	bool isPhysics = trail.IsProjectile()
 	if( isPhysics ) { wait 0.2 }
 
 	vector lastOrigin = trail.GetOrigin()

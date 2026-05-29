@@ -1,0 +1,9 @@
+WeaponData
+{
+	"grenade_ignition_time"							"0.25"	//"0.75"
+
+	//		Ammo
+	//	Reloading/regen
+	"regen_ammo_refill_rate"						"24.0"	//"16.0"
+	"regen_ammo_refill_start_delay"					"0.0"	//"0.0"
+}
