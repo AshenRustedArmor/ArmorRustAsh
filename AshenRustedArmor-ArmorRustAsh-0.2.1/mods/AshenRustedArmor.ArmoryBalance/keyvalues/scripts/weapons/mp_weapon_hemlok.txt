@@ -4,7 +4,7 @@
 //  Distance       0        500       1k0       1k5       2k0       2k5       3k0       3k5       4k0       4k5       5k0
 //	============== # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = # = = = = #
 //	Original HTK: 3.+ ------------------------- 3.+ ----- 4.0 ------------------------- 5.0
-//	Modified HTK: 2.5 ------------------------------- 2.5 ------------- 2.8 ------------- 3.6
+//	Modified HTK: 2.4 ------------------------------- 2.4 ------------- 2.6 ------- 3.3
 
 //		Spread reduction
 
@@ -12,13 +12,13 @@ WeaponData
 {
 	//		Damage
 	//	Direct damage
-	"damage_near_value"								"40"	//"33"
+	"damage_near_value"								"42"	//"33"
 	"damage_near_value_titanarmor"					"100"	//"75"
 
-	"damage_far_value"								"35"	//"25"
+	"damage_far_value"								"38"	//"25"
 	"damage_far_value_titanarmor"					"75"	//"45"
 	
-	"damage_very_far_value"							"28"	//"20"
+	"damage_very_far_value"							"30"	//"20"
 
 	"damage_near_distance"							"1800"	//"1500"
 	"damage_far_distance" 							"2700"	//"2000"
