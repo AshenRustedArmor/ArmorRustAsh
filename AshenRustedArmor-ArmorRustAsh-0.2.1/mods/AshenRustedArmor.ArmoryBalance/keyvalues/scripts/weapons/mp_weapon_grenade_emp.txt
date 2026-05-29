@@ -1,6 +1,6 @@
 WeaponData
 {
-	MP
+	MP_BASE
 	{
 		"grenade_ignition_time"							"0.25"	//"0.75"
 	}
