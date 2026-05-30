@@ -147,8 +147,7 @@ max range:	offset + range	- multiply by ceil(timestep) / timestep
 timestep:	range / speed	- round to integer number of ticks
 */
 
-void function WaveECS_IterateFronts( float currTime ) {
-	// ===== 1. Forward Step =====
+void function WaveECS_MakeTraceJobs( float currTime ) {
 	for (int i = 0; i < fronts.count; i++) {
 		//		Sanity checks
 		//	Non-initialized
@@ -200,6 +199,7 @@ void function WaveECS_IterateFronts( float currTime ) {
 			foreach (float r in range) {
 				vector fwd = AnglesToVector(angles + <0, r, 0>)
 
+				//	Create job
 				jobs.waveID[jobID] = fronts.waveID[i]
 				jobs.frontID[jobID] = fronts.frontID[i]
 				jobs.occlude[jobID] = false
@@ -217,6 +217,7 @@ void function WaveECS_IterateFronts( float currTime ) {
 			vector oldCenter = baseDir * oldDist
 			vector newCenter = baseDir * newDist
 			foreach (float r in range) {
+				//	Create job
 				jobs.waveID[jobID] = fronts.waveID[i]
 				jobs.frontID[jobID] = fronts.frontID[i]
 				jobs.occlude[jobID] = false
@@ -233,9 +234,10 @@ void function WaveECS_IterateFronts( float currTime ) {
 		}
 		jobs.count = jobID
 	}
+}
 
-	// ===== 2. Trace =====
-	for (int i = 0; i < jobs.count; i++) {
+void function WaveECS_ProcessTraceJobs( float currTime ) {
+	for (int i = 0; i < fronts.count; i++) {
 
 	}
 }
