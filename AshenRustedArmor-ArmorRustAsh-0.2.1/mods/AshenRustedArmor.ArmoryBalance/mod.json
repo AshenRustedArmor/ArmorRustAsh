@@ -18,7 +18,16 @@
 		{
 			"Path": "weapons/_scorch.nut",
 			"RunOn": "( CLIENT || SERVER ) && MP"
-		},
-		{}
+		}, {
+			"Path": "weapons/_thermite.nut",
+			"RunOn": "( CLIENT || SERVER ) && MP"
+		}, {
+			"Path": "weapons/_wave.nut",
+			"RunOn": "( CLIENT || SERVER ) && MP"
+		}, {
+            "Path": "_equipment.nut",
+            "RunOn": "SERVER || CLIENT || UI",
+            "Init": "AshenArmoryBalance_Equipment_Init"
+        }
 	]
 }

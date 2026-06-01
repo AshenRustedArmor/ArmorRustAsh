@@ -36,14 +36,24 @@ struct {
 	table< int, array<string> > typeRefArrs
 
 	table< int, int > ctr
+	table< int, int > pdefBounds
+
+	table< void functionref() > registryQueue
 } data
 
 //		Initialization
 void function ArmoryUtil_Registry_Init() { AddCallback_OnRegisterCustomItems( ArmoryUtil_Registry_InitInternal ) }
 void function ArmoryUtil_Registry_InitInternal() {
+	//	1). Track the array counters
 	for (int i = 0; i < eItemTypes.COUNT; i++ ) {
-		data.ctr[i] <- 1000
 		data.typeRefArrs[i] <- GetAllItemRefsOfType(i)
+		data.ctr[i] <- data.typeRefArrs[i].len()
+
+	}
+
+	// 2). Execute all deferred registrations
+	foreach ( void functionref() callback in data.registrationQueue ) {
+		callback()
 	}
 }
 
@@ -79,9 +89,7 @@ SubItemData function _RegisterSubItem( string parentRef, string subItemRef, int 
 }
 
 //	Helper functions
-void function _PopulateFromArgs(
-	ItemData item, string name, string desc, asset image
-) {
+void function _PopulateFromArgs( ItemData item, string name, string desc, asset image ) {
 	item.name = name
 	item.longname = name
 
@@ -103,6 +111,8 @@ void function _PopulateFromFile( ItemData item, string itemRef ) {
 }
 
 void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
+	string persistenceStruct = ""
+
 	switch ( itemType ) {
 		case eItemTypes.PILOT_PRIMARY:
 		case eItemTypes.PILOT_SECONDARY:
@@ -112,20 +122,20 @@ void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
 			stringVal = GetWeaponInfoFileKeyField_GlobalString( ref, "menu_anim_class" )
 			item.i.menuAnimClass <- MenuAnimClassStringToEnumValue( stringVal )
 
-			persistenceName = "pilotWeapons[" + item.persistenceId + "]"
+			persistenceStruct = "pilotWeapons[" + item.persistenceId + "]"
 			break
 
 		case eItemTypes.PILOT_ORDNANCE:
-			item.persistenceStruct = "pilotOffhands[" + item.persistenceId + "]"
+			persistenceStruct = "pilotOffhands[" + item.persistenceId + "]"
 			break
 
 		case eItemTypes.PILOT_SPECIAL:
 			item.imageAtlas = IMAGE_ATLAS_HUD
-			item.persistenceStruct = "pilotOffhands[" + item.persistenceId + "]"
+			persistenceStruct = "pilotOffhands[" + item.persistenceId + "]"
 			break
 
 		case eItemTypes.TITAN_PRIMARY:
-			item.persistenceStruct = "titanWeapons[" + item.persistenceId + "]"
+			persistenceStruct = "titanWeapons[" + item.persistenceId + "]"
 			break
 
 		case eItemTypes.TITAN_SPECIAL:
@@ -133,9 +143,16 @@ void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
 		case eItemTypes.TITAN_ORDNANCE:
 		case eItemTypes.TITAN_CORE_ABILITY:
 			item.imageAtlas = IMAGE_ATLAS_HUD
-			item.persistenceStruct = "titanOffhands[" + item.persistenceId + "]"
+			persistenceStruct = "titanOffhands[" + item.persistenceId + "]"
 			break
 	}
+
+	if( item.persistenceId >= data.pdefBounds[ itemType ] ) {
+		printt( "[ArmoryUtil] Registry: Persistence bypassed for custom item: " + itemRef )
+		return
+	}
+
+	item.persistenceStruct = persistenceStruct
 }
 
 void function _RegisterWeaponCamos( string itemRef ) {
@@ -172,7 +189,7 @@ void function ArmoryUtil_RegisterAbility(
 	string itemRef, string itemType,
 	int cost = 0, bool hidden = false,
 	bool isDamageSource = true,
-) {
+) { data.registryQueue.append( void function() {
 	//	1). Allocate
 	ItemData item = _PopulateAbility( itemRef, itemType, cost, hidden, isDamageSource )
 
@@ -182,13 +199,13 @@ void function ArmoryUtil_RegisterAbility(
 		RegisterWeaponDamageSourceName( ref, expect string( GetWeaponInfoFileKeyField_GlobalNotNull( ref, "shortprintname" ) ) )
 	}
 	#endif
-}
+})}
 
 void function ArmoryUtil_RegisterWeapon(
 	string itemRef, string itemType,
 	string xpPerLevelType = "default",
 	int cost = 0, bool hidden = false
-) {
+) { data.registryQueue.append( void function() {
 	//	1). Populate as ability
 	ItemData item = _PopulateAbility( itemRef, itemType, cost, hidden, true )
 
@@ -202,13 +219,13 @@ void function ArmoryUtil_RegisterWeapon(
 	#if SERVER || CLIENT
 	RegisterWeaponDamageSourceName( itemRef, expect string( GetWeaponInfoFileKeyField_GlobalNotNull( itemRef, "shortprintname" ) ) )
 	#endif
-}
+})}
 
 void function ArmoryUtil_RegisterPassive(
 	string itemRef, string itemSlot,
 	string name, string desc, asset image,
 	int cost = 0, bool hidden = false,
-) {
+) { data.registryQueue.append( void function() {
 	//	1). Allocate
 	ItemData item = _RegisterBaseData( itemRef, itemSlot )
 
@@ -217,13 +234,13 @@ void function ArmoryUtil_RegisterPassive(
 	item.hidden = hidden
 
 	_PopulateFromArgs( item, name, desc, image )
-}
+})}
 
 void function ArmoryUtil_RegisterCommonMod(
 	string modRef, string modType,
 	string name, string desc, asset image,
 	int cost = 0, int costSniper = 0, int costPistol = 0, int costAT = 0
-) {
+) { data.registryQueue.append( void function() {
 	int itemType = (modType == "attachment") ? eItemTypes.SUB_PILOT_WEAPON_ATTACHMENT : eItemTypes.SUB_PILOT_WEAPON_MOD
 	ItemData item = ArmoryUtil_RegisterBaseData( modRef, itemType )
 
@@ -235,12 +252,12 @@ void function ArmoryUtil_RegisterCommonMod(
 	item.i.costSniper <- costSniper
 	item.i.costPistol <- costPistol
 	item.i.costAT <- costAT
-}
+})}
 void function ArmoryUtil_RegisterWeaponMod(
 	string parentRef, string modRef,
 	int cost = -1,
 	int statDamage = 0, int statAccuracy = 0, int statRange = 0, int statFireRate = 0, int statClipSize = 0
-) {
+) { data.registryQueue.append( void function() {
 	Assert( ItemDefined( parentRef ), "[ArmoryUtil] Registry: Parent weapon not registered: " + parentRef )
 	Assert( ItemDefined( modRef ), "[ArmoryUtil] Registry: Common mod not registered: " + modRef )
 
@@ -278,13 +295,13 @@ void function ArmoryUtil_RegisterWeaponMod(
 		statFireRate = statFireRate
 		statClipSize = statClipSize
 	})
-}
+})}
 
 void function ArmoryUtil_RegisterWeaponFeature(
 	string parentRef, string featureRef,
 	string name, string desc, asset image,
 	int cost = 0,
-) {
+) { data.registryQueue.append( void function() {
 	//	Define the parent feature, if not already defined
 	if ( !ItemDefined( featureRef ) ) {
 		ItemData featureItem = ArmoryUtil_RegisterBaseData( featureRef, eItemTypes.WEAPON_FEATURE )
@@ -295,7 +312,7 @@ void function ArmoryUtil_RegisterWeaponFeature(
 	//	Populate subitem
 	ItemData parentItem = GetItemData( parentRef )
 	CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, parentRef, featureRef, cost )
-}
+})}
 
 //void function ArmoryUtil_RegisterPilotExecution() {}
 //void function ArmoryUtil_RegisterPilotSuit() {}
@@ -303,11 +320,11 @@ void function ArmoryUtil_RegisterWeaponFeature(
 void function ArmoryUtil_RegisterTitanBase(
 	string titanRef, string chassisRef,
 	int cost = 0, bool hidden = false
-) {
+) { data.registryQueue.append( void function() {
 	ItemData item = ArmoryUtil_RegisterBaseData( titanRef, eItemTypes.TITAN_CHASSIS )
 	item.cost = cost
 	item.hidden = hidden
-}
+})}
 
 //void function ArmoryUtil_RegisterTitanPassive() {}
 //void function ArmoryUtil_RegisterTitanPrimaryMod() {}
@@ -318,7 +335,9 @@ void function ArmoryUtil_RegisterTitanBase(
 //void function ArmoryUtil_RegisterGamePlaylist() {}
 
 //		Re-registration
-void function ArmoryUtil_RegisterMoveItem( string weaponRef, int newSlot ) {
+void function ArmoryUtil_RegisterMoveItem(
+	string weaponRef, int newSlot
+) { data.registryQueue.append( void function() {
 	//		Sanity checks
 	//	Ensure the weapon exists (_items.gnut:4183)
 	if ( !ItemDefined(weaponRef) ) { return }
@@ -343,4 +362,4 @@ void function ArmoryUtil_RegisterMoveItem( string weaponRef, int newSlot ) {
 
 	//	Status message
 	printt("[ArmoryUtil] Registry: Moved \'" +weaponRef+ "\' to slot " +newSlot)
-}
+})}

@@ -6,6 +6,7 @@ Desktop.ini
 # ===== Helpers =====
 *.lnk
 copy.bat
+.clang-format
 
 # ===== Backups / Tempfiles =====
 *.bak
