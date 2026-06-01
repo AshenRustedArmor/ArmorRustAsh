@@ -3,7 +3,7 @@
 	"Description" : "Rebalance mod.",
 	"Version": "0.1.1",
 
-	"LoadPriority": 1,
+	"LoadPriority": 2,
 	"RequiredOnClient": true,
 
 	"Localisation": [
@@ -18,16 +18,21 @@
 		{
 			"Path": "weapons/_scorch.nut",
 			"RunOn": "( CLIENT || SERVER ) && MP"
-		}, {
+		},
+		{
 			"Path": "weapons/_thermite.nut",
 			"RunOn": "( CLIENT || SERVER ) && MP"
-		}, {
-			"Path": "weapons/_wave.nut",
-			"RunOn": "( CLIENT || SERVER ) && MP"
-		}, {
+		},
+//		{
+//			"Path": "weapons/_wave.nut",
+//			"RunOn": "( CLIENT || SERVER ) && MP"
+//		},
+		{
             "Path": "_equipment.nut",
-            "RunOn": "SERVER || CLIENT || UI",
-            "Init": "AshenArmoryBalance_Equipment_Init"
+            "RunOn": "CLIENT || SERVER || UI",
+            "UICallback": { "Before": "ArmoryBalance_Equipment_Init" },
+			"ServerCallback": { "Before": "ArmoryBalance_Equipment_Init" },
+			"ClientCallback": { "Before": "ArmoryBalance_Equipment_Init" }
         }
 	]
 }

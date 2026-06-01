@@ -1,5 +1,5 @@
 //	Move into secondaries
 WeaponData
 {
-	"menu_category"                                 "handgun"	//	"handgun"
+	"menu_category"                                 "pistol"	//	"handgun"
 }

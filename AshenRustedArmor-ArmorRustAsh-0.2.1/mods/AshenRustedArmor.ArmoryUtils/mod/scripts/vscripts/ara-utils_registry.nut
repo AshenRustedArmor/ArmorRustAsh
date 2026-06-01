@@ -1,5 +1,17 @@
 global function ArmoryUtil_Registry_Init
 
+global function ArmoryUtil_RegisterAbility
+global function ArmoryUtil_RegisterWeapon
+global function ArmoryUtil_RegisterPassive
+
+global function ArmoryUtil_RegisterCommonMod
+global function ArmoryUtil_RegisterWeaponMod
+global function ArmoryUtil_RegisterWeaponFeature
+
+global function ArmoryUtil_RegisterTitanBase
+
+global function ArmoryUtil_RegisterMoveItem
+
 /*	=======	ITEM REGISTRATION =======
 	There are multiple item registry files. Of them, the one most relevant here
 	is 'NorthstarMods/Northstar.CustomServers/mod/scripts/vscripts/_items.gnut'
@@ -38,28 +50,43 @@ struct {
 	table< int, int > ctr
 	table< int, int > pdefBounds
 
-	table< void functionref() > registryQueue
+	array< void functionref() > registryQueue
 } data
 
 //		Initialization
-void function ArmoryUtil_Registry_Init() { AddCallback_OnRegisterCustomItems( ArmoryUtil_Registry_InitInternal ) }
+void function ArmoryUtil_Registry_Init() {
+	data.itemRefArrs = {}
+	data.typeRefArrs = {}
+
+	data.ctr = {}
+	data.pdefBounds = {}
+
+	data.registryQueue = []
+
+	AddCallback_OnRegisterCustomItems( ArmoryUtil_Registry_InitInternal )
+	printt( "[ArmoryUtil] Registry: Init call" )
+}
 void function ArmoryUtil_Registry_InitInternal() {
 	//	1). Track the array counters
 	for (int i = 0; i < eItemTypes.COUNT; i++ ) {
-		data.typeRefArrs[i] <- GetAllItemRefsOfType(i)
+		data.typeRefArrs[i] <- GetAllRefsOfType(i)
 		data.ctr[i] <- data.typeRefArrs[i].len()
 
+		data.pdefBounds[i] <- data.typeRefArrs[i].len()
 	}
 
 	// 2). Execute all deferred registrations
-	foreach ( void functionref() callback in data.registrationQueue ) {
+	foreach ( void functionref() callback in data.registryQueue ) {
+		printt( "[ArmoryUtil] Registry: running queued lambda" )
 		callback()
 	}
+
+	printt( "[ArmoryUtil] Registry: Queue drained." )
 }
 
 //		Registration
 //	Item creation
-ItemData function _RegisterBaseData( string itemRef, int itemType ) {
+ItemData function _RegisterBaseData( string itemRef, int itemType, bool hidden = false ) {
 	//		Sanity checks
 	//	Get if already defined (_items.gnut:4183)
 	if ( ItemDefined(itemRef) ) { return GetItemData(itemRef) }
@@ -70,22 +97,9 @@ ItemData function _RegisterBaseData( string itemRef, int itemType ) {
 	data.ctr[ itemType ]++
 
 	//	Create base item data
-		ItemData item = CreateBaseItemData( itemIdx, itemType, itemRef )
+	ItemData item = CreateBaseItemData( itemType, itemRef, hidden )
 	item.persistenceId = itemIdx
 	return item
-}
-
-SubItemData function _RegisterSubItem( string parentRef, string subItemRef, int subItemType, int cost = 0 ) {
-	SubItemData subItem
-
-	subItem.parentRef = parentRef
-	subItem.ref = subItemRef
-	subItem.itemType = subItemType
-
-	subItem.cost = cost
-	subItem.i = {}
-
-	return subItem
 }
 
 //	Helper functions
@@ -101,13 +115,13 @@ void function _PopulateFromArgs( ItemData item, string name, string desc, asset 
 }
 
 void function _PopulateFromFile( ItemData item, string itemRef ) {
-	item.name	  = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( ref, "shortprintname" ) )
-	item.longname = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( ref, "printname" ) )
-	item.desc	  = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( ref, "description" ) )
-	item.longdesc = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( ref, "longdesc" ) )
+	item.name	  = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( itemRef, "shortprintname" ) )
+	item.longname = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( itemRef, "printname" ) )
+	item.desc	  = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( itemRef, "description" ) )
+	item.longdesc = expect string( GetWeaponInfoFileKeyField_GlobalNotNull( itemRef, "longdesc" ) )
 
-	asset image = GetWeaponInfoFileKeyFieldAsset_Global( ref, "menu_icon" )
-	item.image = ( image == $"" ) ? image = $"ui/temp" : image
+	asset image = GetWeaponInfoFileKeyFieldAsset_Global( itemRef, "menu_icon" )
+	if ( image == $"" ) { item.image = $"ui/temp" } else { item.image = image }
 }
 
 void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
@@ -116,10 +130,10 @@ void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
 	switch ( itemType ) {
 		case eItemTypes.PILOT_PRIMARY:
 		case eItemTypes.PILOT_SECONDARY:
-			string stringVal = GetWeaponInfoFileKeyField_GlobalString( ref, "menu_category" )
+			string stringVal = GetWeaponInfoFileKeyField_GlobalString( itemRef, "menu_category" )
 			item.i.menuCategory <- MenuCategoryStringToEnumValue( stringVal )
 
-			stringVal = GetWeaponInfoFileKeyField_GlobalString( ref, "menu_anim_class" )
+			stringVal = GetWeaponInfoFileKeyField_GlobalString( itemRef, "menu_anim_class" )
 			item.i.menuAnimClass <- MenuAnimClassStringToEnumValue( stringVal )
 
 			persistenceStruct = "pilotWeapons[" + item.persistenceId + "]"
@@ -155,62 +169,138 @@ void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
 	item.persistenceStruct = persistenceStruct
 }
 
+int function MenuCategoryStringToEnumValue( string stringVal ) {
+	int enumVal = -1
+	switch ( stringVal ) {
+		case "ar":
+			enumVal = ePrimaryWeaponCategory.AR
+			break
+
+		case "smg":
+			enumVal = ePrimaryWeaponCategory.SMG
+			break
+
+		case "lmg":
+			enumVal = ePrimaryWeaponCategory.LMG
+			break
+
+		case "sniper":
+			enumVal = ePrimaryWeaponCategory.SNIPER
+			break
+
+		case "shotgun":
+			enumVal = ePrimaryWeaponCategory.SHOTGUN
+			break
+
+		case "handgun":
+			enumVal = ePrimaryWeaponCategory.HANDGUN
+			break
+
+		case "special":
+			enumVal = ePrimaryWeaponCategory.SPECIAL
+			break
+
+		case "at":
+			enumVal = eSecondaryWeaponCategory.AT
+			break
+
+		case "pistol":
+			enumVal = eSecondaryWeaponCategory.PISTOL
+			break
+
+		default:
+			Assert( 0, "Unknown stringVal: " + stringVal )
+	}
+
+	return enumVal
+}
+
+int function MenuAnimClassStringToEnumValue( string stringVal ) {
+	int enumVal = -1
+
+	switch ( stringVal ) {
+		case "small":
+			enumVal = eMenuAnimClass.SMALL
+			break
+
+		case "medium":
+			enumVal = eMenuAnimClass.MEDIUM
+			break
+
+		case "large":
+			enumVal = eMenuAnimClass.LARGE
+			break
+
+		case "custom":
+			enumVal = eMenuAnimClass.CUSTOM
+			break
+
+		default:
+			Assert( 0, "Unknown stringVal: " + stringVal )
+	}
+
+	return enumVal
+}
+
 void function _RegisterWeaponCamos( string itemRef ) {
 	var camoSkinsDataTable = GetDataTable( $"datatable/camo_skins.rpak" )
 	for ( int i = 0; i < GetDatatableRowCount( camoSkinsDataTable ); i++ ) {
 		string camoRef = GetDataTableString( camoSkinsDataTable, i, GetDataTableColumnByName( camoSkinsDataTable, "camoRef" ) )
-		int categoryId = GetDataTableInt( camoSkinsDataTable, camoRow, GetDataTableColumnByName( camoSkinsDataTable, CAMO_CATEGORY_COLUMN_NAME ) )
+		int categoryId = GetDataTableInt( camoSkinsDataTable, i, GetDataTableColumnByName( camoSkinsDataTable, CAMO_CATEGORY_COLUMN_NAME ) )
 
 		CreateGenericSubItemData( eItemTypes.CAMO_SKIN, itemRef, camoRef, 0, { categoryId = categoryId } )
 	}
 }
 
-void function _PopulateAbility(
-	string itemRef, string itemType,
+ItemData function _PopulateAbility(
+	string itemRef, int itemType,
 	int cost, bool hidden,
 	bool isDamageSource,
 ) {
 	//	1). Allocate
-	ItemData item = _RegisterBaseData( itemRef, itemType )
+	ItemData item = _RegisterBaseData( itemRef, itemType, hidden )
 
 	//	2). Map values
 	item.cost = cost
-	item.hidden = hidden
-	item.isDamageSource = isDamageSource
+	item.i.isDamageSource = isDamageSource
 
 	_PopulateFromFile( item, itemRef )
 	_ApplyPersistence( item, itemRef, itemType )
 
-	//	3). Register damage source
-
+	return item
+}
 
 //	Registration functions
 void function ArmoryUtil_RegisterAbility(
-	string itemRef, string itemType,
+	string itemRef, int itemType,
 	int cost = 0, bool hidden = false,
 	bool isDamageSource = true,
-) { data.registryQueue.append( void function() {
+) { data.registryQueue.append( void function(): (
+	itemRef, itemType, cost, hidden, isDamageSource
+) {
 	//	1). Allocate
 	ItemData item = _PopulateAbility( itemRef, itemType, cost, hidden, isDamageSource )
 
 	//	2). Register damage source
 	#if SERVER || CLIENT
 	if( itemType != eItemTypes.NOT_LOADOUT  && isDamageSource ) {
-		RegisterWeaponDamageSourceName( ref, expect string( GetWeaponInfoFileKeyField_GlobalNotNull( ref, "shortprintname" ) ) )
+		RegisterWeaponDamageSourceName( itemRef, expect string( GetWeaponInfoFileKeyField_GlobalNotNull( itemRef, "shortprintname" ) ) )
 	}
 	#endif
 })}
 
 void function ArmoryUtil_RegisterWeapon(
-	string itemRef, string itemType,
+	string itemRef, int itemType,
 	string xpPerLevelType = "default",
-	int cost = 0, bool hidden = false
-) { data.registryQueue.append( void function() {
+	int cost = 0, bool hidden = false,
+) { data.registryQueue.append( void function() : (
+	itemRef, itemType, xpPerLevelType, cost, hidden
+) {
 	//	1). Populate as ability
 	ItemData item = _PopulateAbility( itemRef, itemType, cost, hidden, true )
 
 	//	2). Fill weapon-specific info
-	item.i.xpPerLevelType <= xpPerLevelType
+	item.i.xpPerLevelType <- xpPerLevelType
 	WeaponSetXPPerLevelType( itemRef, xpPerLevelType )
 
 	_RegisterWeaponCamos( itemRef )
@@ -222,12 +312,14 @@ void function ArmoryUtil_RegisterWeapon(
 })}
 
 void function ArmoryUtil_RegisterPassive(
-	string itemRef, string itemSlot,
+	string itemRef, int itemType,
 	string name, string desc, asset image,
 	int cost = 0, bool hidden = false,
-) { data.registryQueue.append( void function() {
+) { data.registryQueue.append( void function() : (
+	itemRef, itemType, name, desc, image, cost, hidden
+) {
 	//	1). Allocate
-	ItemData item = _RegisterBaseData( itemRef, itemSlot )
+	ItemData item = _RegisterBaseData( itemRef, itemType, hidden )
 
 	//	2). Map values
 	item.cost = cost
@@ -239,10 +331,13 @@ void function ArmoryUtil_RegisterPassive(
 void function ArmoryUtil_RegisterCommonMod(
 	string modRef, string modType,
 	string name, string desc, asset image,
-	int cost = 0, int costSniper = 0, int costPistol = 0, int costAT = 0
-) { data.registryQueue.append( void function() {
+	int cost = 0, int costSniper = 0, int costPistol = 0, int costAT = 0,
+	bool hidden = false,
+) { data.registryQueue.append( void function() : (
+	modRef, modType, name, desc, image, cost, costSniper, costPistol, costAT, hidden
+) {
 	int itemType = (modType == "attachment") ? eItemTypes.SUB_PILOT_WEAPON_ATTACHMENT : eItemTypes.SUB_PILOT_WEAPON_MOD
-	ItemData item = ArmoryUtil_RegisterBaseData( modRef, itemType )
+	ItemData item = _RegisterBaseData( modRef, itemType, hidden )
 
 	item.cost = cost
 	_PopulateFromArgs( item, name, desc, image )
@@ -257,7 +352,9 @@ void function ArmoryUtil_RegisterWeaponMod(
 	string parentRef, string modRef,
 	int cost = -1,
 	int statDamage = 0, int statAccuracy = 0, int statRange = 0, int statFireRate = 0, int statClipSize = 0
-) { data.registryQueue.append( void function() {
+) { data.registryQueue.append( void function() : (
+	parentRef, modRef, cost, statDamage, statAccuracy, statRange, statFireRate, statClipSize,
+) {
 	Assert( ItemDefined( parentRef ), "[ArmoryUtil] Registry: Parent weapon not registered: " + parentRef )
 	Assert( ItemDefined( modRef ), "[ArmoryUtil] Registry: Common mod not registered: " + modRef )
 
@@ -289,22 +386,24 @@ void function ArmoryUtil_RegisterWeaponMod(
 
 	//	Populate subitem
 	CreateGenericSubItemData( subItemType, parentRef, modRef, resolvedCost, {
-		statDamage = statDamage
-		statRange = statRange
-		statAccuracy = statAccuracy
-		statFireRate = statFireRate
-		statClipSize = statClipSize
+		statDamage = statDamage,
+		statRange = statRange,
+		statAccuracy = statAccuracy,
+		statFireRate = statFireRate,
+		statClipSize = statClipSize,
 	})
 })}
 
 void function ArmoryUtil_RegisterWeaponFeature(
 	string parentRef, string featureRef,
 	string name, string desc, asset image,
-	int cost = 0,
-) { data.registryQueue.append( void function() {
+	int cost = 0, bool hidden = false,
+) { data.registryQueue.append( void function() : (
+	parentRef, featureRef, name, desc, image, cost, hidden
+) {
 	//	Define the parent feature, if not already defined
 	if ( !ItemDefined( featureRef ) ) {
-		ItemData featureItem = ArmoryUtil_RegisterBaseData( featureRef, eItemTypes.WEAPON_FEATURE )
+		ItemData featureItem = _RegisterBaseData( featureRef, eItemTypes.WEAPON_FEATURE, hidden )
 		featureItem.cost = cost
 		_PopulateFromArgs( featureItem, name, desc, image )
 	}
@@ -320,8 +419,10 @@ void function ArmoryUtil_RegisterWeaponFeature(
 void function ArmoryUtil_RegisterTitanBase(
 	string titanRef, string chassisRef,
 	int cost = 0, bool hidden = false
-) { data.registryQueue.append( void function() {
-	ItemData item = ArmoryUtil_RegisterBaseData( titanRef, eItemTypes.TITAN_CHASSIS )
+) { data.registryQueue.append( void function() : (
+	titanRef, chassisRef, cost, hidden
+) {
+	ItemData item = _RegisterBaseData( titanRef, eItemTypes.TITAN_CHASSIS, hidden )
 	item.cost = cost
 	item.hidden = hidden
 })}
@@ -337,7 +438,7 @@ void function ArmoryUtil_RegisterTitanBase(
 //		Re-registration
 void function ArmoryUtil_RegisterMoveItem(
 	string weaponRef, int newSlot
-) { data.registryQueue.append( void function() {
+) { data.registryQueue.append( void function() : (weaponRef, newSlot) {
 	//		Sanity checks
 	//	Ensure the weapon exists (_items.gnut:4183)
 	if ( !ItemDefined(weaponRef) ) { return }
@@ -357,8 +458,38 @@ void function ArmoryUtil_RegisterMoveItem(
 	if( oldTypeIndex != -1 ) { oldTypeRefs.remove(oldTypeIndex) }
 
 	//	Append to new location and update type
+	oldTypeRefs.fastremovebyvalue( weaponRef )
 	newTypeRefs.append( weaponRef )
 	item.itemType = newSlot
+
+	if ( "menuCategory" in item.i ) {
+		string stringVal = GetWeaponInfoFileKeyField_GlobalString( weaponRef, "menu_category" )
+		item.i.menuCategory = MenuCategoryStringToEnumValue( stringVal )
+	}
+	if ( "menuAnimClass" in item.i ) {
+		string stringVal = GetWeaponInfoFileKeyField_GlobalString( weaponRef, "menu_anim_class" )
+		item.i.menuAnimClass = MenuAnimClassStringToEnumValue( stringVal )
+	}
+
+	foreach ( string modRef, SubItemData subitem in item.subitems )
+{
+	// If moving from Primary to Secondary
+	if ( newSlot == eItemTypes.PILOT_SECONDARY ) {
+		if ( subitem.itemType == eItemTypes.PILOT_PRIMARY_MOD ||
+			subitem.itemType == eItemTypes.PILOT_PRIMARY_ATTACHMENT
+		) {
+			subitem.itemType = eItemTypes.PILOT_SECONDARY_MOD
+		}
+	}
+
+	else if ( newSlot == eItemTypes.PILOT_PRIMARY ) {
+		if ( subitem.itemType == eItemTypes.PILOT_SECONDARY_MOD ) {
+			// Note: Attachments like sights usually require a specific modType flag check,
+			// but pushing them to primary mod works natively for stats
+			subitem.itemType = eItemTypes.PILOT_PRIMARY_MOD
+		}
+	}
+}
 
 	//	Status message
 	printt("[ArmoryUtil] Registry: Moved \'" +weaponRef+ "\' to slot " +newSlot)
