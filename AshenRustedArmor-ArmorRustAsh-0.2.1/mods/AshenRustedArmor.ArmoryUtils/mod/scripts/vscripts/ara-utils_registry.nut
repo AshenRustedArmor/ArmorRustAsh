@@ -139,12 +139,9 @@ void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
 			persistenceStruct = "pilotWeapons[" + item.persistenceId + "]"
 			break
 
-		case eItemTypes.PILOT_ORDNANCE:
-			persistenceStruct = "pilotOffhands[" + item.persistenceId + "]"
-			break
-
 		case eItemTypes.PILOT_SPECIAL:
 			item.imageAtlas = IMAGE_ATLAS_HUD
+		case eItemTypes.PILOT_ORDNANCE:
 			persistenceStruct = "pilotOffhands[" + item.persistenceId + "]"
 			break
 
@@ -167,79 +164,6 @@ void function _ApplyPersistence( ItemData item, string itemRef, int itemType ) {
 	}
 
 	item.persistenceStruct = persistenceStruct
-}
-
-int function MenuCategoryStringToEnumValue( string stringVal ) {
-	int enumVal = -1
-	switch ( stringVal ) {
-		case "ar":
-			enumVal = ePrimaryWeaponCategory.AR
-			break
-
-		case "smg":
-			enumVal = ePrimaryWeaponCategory.SMG
-			break
-
-		case "lmg":
-			enumVal = ePrimaryWeaponCategory.LMG
-			break
-
-		case "sniper":
-			enumVal = ePrimaryWeaponCategory.SNIPER
-			break
-
-		case "shotgun":
-			enumVal = ePrimaryWeaponCategory.SHOTGUN
-			break
-
-		case "handgun":
-			enumVal = ePrimaryWeaponCategory.HANDGUN
-			break
-
-		case "special":
-			enumVal = ePrimaryWeaponCategory.SPECIAL
-			break
-
-		case "at":
-			enumVal = eSecondaryWeaponCategory.AT
-			break
-
-		case "pistol":
-			enumVal = eSecondaryWeaponCategory.PISTOL
-			break
-
-		default:
-			Assert( 0, "Unknown stringVal: " + stringVal )
-	}
-
-	return enumVal
-}
-
-int function MenuAnimClassStringToEnumValue( string stringVal ) {
-	int enumVal = -1
-
-	switch ( stringVal ) {
-		case "small":
-			enumVal = eMenuAnimClass.SMALL
-			break
-
-		case "medium":
-			enumVal = eMenuAnimClass.MEDIUM
-			break
-
-		case "large":
-			enumVal = eMenuAnimClass.LARGE
-			break
-
-		case "custom":
-			enumVal = eMenuAnimClass.CUSTOM
-			break
-
-		default:
-			Assert( 0, "Unknown stringVal: " + stringVal )
-	}
-
-	return enumVal
 }
 
 void function _RegisterWeaponCamos( string itemRef ) {
@@ -268,6 +192,35 @@ ItemData function _PopulateAbility(
 	_ApplyPersistence( item, itemRef, itemType )
 
 	return item
+}
+
+int function MenuCategoryStringToEnumValue( string stringVal ) {
+	int enumVal = -1
+	switch ( stringVal ) {
+		case "ar":       enumVal = ePrimaryWeaponCategory.AR;		break
+		case "smg":      enumVal = ePrimaryWeaponCategory.SMG;		break
+		case "lmg":      enumVal = ePrimaryWeaponCategory.LMG;		break
+		case "sniper":   enumVal = ePrimaryWeaponCategory.SNIPER;	break
+		case "shotgun":  enumVal = ePrimaryWeaponCategory.SHOTGUN;	break
+		case "handgun":  enumVal = ePrimaryWeaponCategory.HANDGUN;	break
+		case "special":  enumVal = ePrimaryWeaponCategory.SPECIAL;	break
+		case "at":       enumVal = eSecondaryWeaponCategory.AT;		break
+		case "pistol":   enumVal = eSecondaryWeaponCategory.PISTOL;	break
+		default:         Assert( 0, "Unknown stringVal: " + stringVal )
+	}
+	return enumVal
+}
+
+int function MenuAnimClassStringToEnumValue( string stringVal ) {
+	int enumVal = -1
+	switch ( stringVal ) {
+		case "small":    enumVal = eMenuAnimClass.SMALL;	break
+		case "medium":   enumVal = eMenuAnimClass.MEDIUM;	break
+		case "large":    enumVal = eMenuAnimClass.LARGE;	break
+		case "custom":   enumVal = eMenuAnimClass.CUSTOM;	break
+		default:         Assert( 0, "Unknown stringVal: " + stringVal )
+	}
+	return enumVal
 }
 
 //	Registration functions
@@ -436,6 +389,10 @@ void function ArmoryUtil_RegisterTitanBase(
 //void function ArmoryUtil_RegisterGamePlaylist() {}
 
 //		Re-registration
+//	_items.nut: ItemDisplayData
+//	_items.nut: GetVisibleItemsOfType
+//	_items.nut: file.globalItemRefsOfType
+//	menu_edit_loadout_pilot.nut: OnEditPilotSlotButton_Activate
 void function ArmoryUtil_RegisterMoveItem(
 	string weaponRef, int newSlot
 ) { data.registryQueue.append( void function() : (weaponRef, newSlot) {
@@ -443,53 +400,58 @@ void function ArmoryUtil_RegisterMoveItem(
 	//	Ensure the weapon exists (_items.gnut:4183)
 	if ( !ItemDefined(weaponRef) ) { return }
 
-	//	Skip if the item has already been moved
-	ItemData item = GetItemData(weaponRef)	//	Retrieve item data (_items.gnut:4188)
-	int oldSlot = item.itemType
-	if ( oldSlot == newSlot ) { return }
+	ItemData itemData = GetItemData(weaponRef)
+	ItemDisplayData displayData = GetItemDisplayData(weaponRef)
+
+	int oldSlotItem = itemData.itemType
+	int oldSlotDisplay = displayData.slot
+
+	//	Skip execution if completely moved
+	if ( oldSlotItem == newSlot
+		&& oldSlotDisplay == newSlot ) { return }
 
 	//		Functionality
 	//	Fetch item ref array pointers
-	array<string> oldTypeRefs = GetAllRefsOfType( oldSlot )
+	array<string> oldTypeRefs = GetAllRefsOfType( oldSlotItem )
 	array<string> newTypeRefs = GetAllRefsOfType( newSlot )
 
-	//	Erase from oldTypeRefs
+	//	SRemap to new slot location
 	int oldTypeIndex = oldTypeRefs.find( weaponRef )
 	if( oldTypeIndex != -1 ) { oldTypeRefs.remove(oldTypeIndex) }
-
-	//	Append to new location and update type
-	oldTypeRefs.fastremovebyvalue( weaponRef )
 	newTypeRefs.append( weaponRef )
-	item.itemType = newSlot
 
-	if ( "menuCategory" in item.i ) {
-		string stringVal = GetWeaponInfoFileKeyField_GlobalString( weaponRef, "menu_category" )
-		item.i.menuCategory = MenuCategoryStringToEnumValue( stringVal )
-	}
-	if ( "menuAnimClass" in item.i ) {
-		string stringVal = GetWeaponInfoFileKeyField_GlobalString( weaponRef, "menu_anim_class" )
-		item.i.menuAnimClass = MenuAnimClassStringToEnumValue( stringVal )
+	//	Update type, category, anim context
+	itemData.itemType = newSlot
+	displayData.slot = newSlot
+
+	string categoryStr = GetWeaponInfoFileKeyField_GlobalString( weaponRef, "menu_category" )
+	if ( categoryStr != "" ) {
+		int categoryEnum = MenuCategoryStringToEnumValue( categoryStr )
+		if ( "menuCategory" in itemData.i ) { itemData.i.menuCategory <- categoryEnum }
 	}
 
-	foreach ( string modRef, SubItemData subitem in item.subitems )
-{
-	// If moving from Primary to Secondary
-	if ( newSlot == eItemTypes.PILOT_SECONDARY ) {
-		if ( subitem.itemType == eItemTypes.PILOT_PRIMARY_MOD ||
-			subitem.itemType == eItemTypes.PILOT_PRIMARY_ATTACHMENT
-		) {
-			subitem.itemType = eItemTypes.PILOT_SECONDARY_MOD
+	string animStr = GetWeaponInfoFileKeyField_GlobalString( weaponRef, "menu_anim_class" )
+	if ( animStr != "" ) {
+		int animEnum = MenuAnimClassStringToEnumValue( animStr )
+		if ( "menuAnimClass" in itemData.i ) { itemData.i.menuAnimClass <- animEnum }
+
+	}
+
+	//	Remap subitems
+	int oldModType = eItemTypes.PILOT_WEAPON_MOD3
+	if ( oldSlotItem == eItemTypes.PILOT_PRIMARY ) oldModType = eItemTypes.PILOT_PRIMARY_MOD
+	else if ( oldSlotItem == eItemTypes.PILOT_SECONDARY ) oldModType = eItemTypes.PILOT_SECONDARY_MOD
+
+	int newModType = eItemTypes.PILOT_WEAPON_MOD3
+	if ( newSlot == eItemTypes.PILOT_PRIMARY ) newModType = eItemTypes.PILOT_PRIMARY_MOD
+	else if ( newSlot == eItemTypes.PILOT_SECONDARY ) newModType = eItemTypes.PILOT_SECONDARY_MOD
+
+	if ( oldModType != -1 && newModType != -1 && oldModType != newModType ) {
+		foreach ( string modRef, SubItemData subitem in itemData.subitems ) {
+			// Migrates weapon mods while leaving shared attachments (e.g. Optics) untouched
+			if ( subitem.itemType == oldModType ) { subitem.itemType = newModType }
 		}
 	}
-
-	else if ( newSlot == eItemTypes.PILOT_PRIMARY ) {
-		if ( subitem.itemType == eItemTypes.PILOT_SECONDARY_MOD ) {
-			// Note: Attachments like sights usually require a specific modType flag check,
-			// but pushing them to primary mod works natively for stats
-			subitem.itemType = eItemTypes.PILOT_PRIMARY_MOD
-		}
-	}
-}
 
 	//	Status message
 	printt("[ArmoryUtil] Registry: Moved \'" +weaponRef+ "\' to slot " +newSlot)
