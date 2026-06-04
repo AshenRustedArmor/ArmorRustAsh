@@ -22,7 +22,7 @@ WeaponData
 
 	"damage_near_distance"							"1800"	//"1500"
 	"damage_far_distance" 							"2700"	//"2000"
-	"damage_very_far_distance" 						"3600"	//"3500"
+	"damage_very_far_distance" 						"3300"	//"3500"
 
 	//		Spread
 	//	Standing
