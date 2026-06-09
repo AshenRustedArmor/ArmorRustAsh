@@ -430,96 +430,111 @@ struct
 /// ║                                                                                  ║
 /// ╚══════════════════════════════════════════════════════════════════════════════════╝
 
-//	Pre-computed map for strict O(1) inference matching
-global table< string, table<string, var> > util_RegistryInferenceMap = {
-	// Structural Indices
-	datatableindex	= { colName = "",				dataType = eColType.INT,	dataSource = eParamSource.ROW_INDEX },
-	index			= { colName = "",				dataType = eColType.INT,	dataSource = eParamSource.ROW_INDEX },
-	rowidx			= { colName = "",				dataType = eColType.INT,	dataSource = eParamSource.ROW_INDEX },
-
-	// Types & References
-	itemtype		= { colName = "type",			dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-	ref				= { colName = "ref",			dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-	itemref			= { colName = "itemRef",		dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-	parentref		= { colName = "parentRef",		dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-	weaponref		= { colName = "weaponRef",		dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-	nonprimeref		= { colName = "nonPrimeRef",	dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-
-	// Display Data
-	name           = { colName = "name",			dataType = eColType.STRING,	dataSource = eParamSource.DATATABLE },
-	desc           = { colName = "description",		dataType = eColType.STRING, dataSource = eParamSource.DATATABLE },
-//	longdesc       = { colName = "description",		dataType = eColType.STRING, dataSource = eParamSource.DATATABLE },
-	image          = { colName = "image",			dataType = eColType.ASSET,  dataSource = eParamSource.DATATABLE },
-	model          = { colName = "model",			dataType = eColType.ASSET,  dataSource = eParamSource.DATATABLE },
-
-	// Stats & Booleans
-	cost           = { colName = "cost",			dataType = eColType.INT,	dataSource = eParamSource.DATATABLE },
-	hidden         = { colName = "hidden",			dataType = eColType.BOOL,	dataSource = eParamSource.DATATABLE },
-	isdamagesource = { colName = "damageSource",	dataType = eColType.BOOL,	dataSource = eParamSource.DATATABLE },
-
-	// Special Custom Parameters
-	decalindex     = { colName = "decalIndex",		dataType = eColType.INT,	dataSource = eParamSource.DATATABLE },
-	skinindex      = { colName = "skinIndex",		dataType = eColType.INT,	dataSource = eParamSource.DATATABLE },
-	skintype       = { colName = "skinType",		dataType = eColType.INT,	dataSource = eParamSource.DATATABLE }
-}
-
-//		Parameter inference
+// =============== PARAMETER INFERENCE ===============
+//		Options for data retrieval
 //	Maps to GetDataTable[Type] functions.
 enum eColType { NULL, BOOL, INT, FLOAT, VECTOR, STRING, ASSET }
 
 //	Decides where data comes from.
 enum eParamSource { DATATABLE, ROW_INDEX, STATIC_VAL }
 
-//	Blueprint and builder function
-struct ParamBinding {
-	string fnName	//	Name of bound function
+//		ParamBinding
+//	Links a column in registry.cache to a function parameter
+class ParamBinding {
+	//	Binding destination & source
 	string argName	//	Parsed or given parameter name
 	string colName	//	Target DataTable column name
+	int _idx = -1	//	Index of retrieved column
 
-	int dataType	= eColType.STRING
-	int dataSource	= eParamSource.DATATABLE
-	var staticValue = null
+	//	Binding data handling
+	int dataType	= eColType.STRING			//	Type fetched from datatable
+	int dataSource	= eParamSource.DATATABLE	//	Controls retrieval function
+	var value 		= null						//	Static val or column arr
 
-	int _idx = -1
-}
+	//	Value retrieval function
+	var functionref( int ) Get = null			//	Getter assigned in ProcessBake
 
-ParamBinding function _InferBinding( string argName ) {
-	ParamBinding b
-	b.argName = argName
-	b.colName = colName
+	//	Constructors
+	constructor( string colName, int dataType, int dataSource = eParamSource.DATATABLE ) {
+		this.colName = colName
 
-	if ( lower in util_RegistryInferenceMap ) {
-		b.colName    = expect string( mapping.colName )
-		b.dataType   = expect int( mapping.dataType )
-		b.dataSource = expect int( mapping.dataSource )
+		this.dataType = dataType
+		this.dataSource = dataSource
 	}
 
-	return b
+	ParamBinding function Infer( string argName ) {
+		//	Clone from inference
+		ParamBinding b
+		string lower = argName.tolower()
+		if (lower in registryInferenceMap) { b = clone registryInferenceMap[lower]; }
+
+		//	Set other parameters
+		b.argName = argName
+
+		return b
+	}
 }
 
-// =================== DATA HANDLING ===================
+//	Pre-computed map for strict O(1) inference matching
+table< string, ParamBinding > registryInferenceMap = {
+	// Structural Indices
+	datatableindex	= ParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
+	index			= ParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
+	rowidx			= ParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
+
+	// Types & References
+	itemtype		= ParamBinding( "type",			eColType.STRING ),
+	ref				= ParamBinding( "ref",			eColType.STRING ),
+	itemref			= ParamBinding( "itemRef",		eColType.STRING ),
+	parentref		= ParamBinding( "parentRef",	eColType.STRING ),
+	weaponref		= ParamBinding( "weaponRef",	eColType.STRING ),
+	nonprimeref		= ParamBinding( "nonPrimeRef",	eColType.STRING ),
+
+	// Display Data
+	name           = ParamBinding( "name",			eColType.STRING ),
+	desc           = ParamBinding( "description",	eColType.STRING ),
+	longdesc       = ParamBinding( "description",	eColType.STRING ),
+	image          = ParamBinding( "image",			eColType.ASSET ),
+	model          = ParamBinding( "model",			eColType.ASSET ),
+
+	// Stats & Booleans
+	cost           = ParamBinding( "cost",			eColType.INT ),
+	hidden         = ParamBinding( "hidden",		eColType.BOOL ),
+	isdamagesource = ParamBinding( "damageSource",	eColType.BOOL ),
+
+	// Special Custom Parameters
+	decalindex     = ParamBinding( "decalIndex",	eColType.INT ),
+	skinindex      = ParamBinding( "skinIndex",		eColType.INT ),
+	skintype       = ParamBinding( "skinType",		eColType.INT )
+}
+
+
+
+// =============== DATA HANDLING ===============
+//	Cached data struct
 struct RPakData {
 	int numRows
 	table< string, int > colTypes		//	"cost" -> eColType.INT
 	table< string, array<var> > data	//	"cost" -> [ 1, 2, 3 ]
 }
 
-bool function RPak_IsCached( string rpakPath ) { return (rpakPath in registry.cache); }
-
+// ============== REGISTRY & CACHE ===============
 struct {
-	// ======= QUEUES =======
+	// ========== CALLBACKS ==========
+	array< void functionref() > cb_OnRegistryInit
+	array< void functionref() > cb_OnRegistryMutate
+
+	// ========== QUEUES
 	array<TaskInferBindings>	queueInferBindings
 	array<TaskCacheBoundData>	queueCacheBoundData
 	array<TaskMutateItemData>	queueMutateItemData
 	array<TaskBakeItemData>		queueBakeItems //BakeBaseItems 	//	Order required to ensure correct inheritance
 
-	// ======= CALLBACKS =======
-	array< void functionref() > cb_OnRegistryInit
-	array< void functionref() > cb_OnRegistryMutate
-
-	// ======= STATE =======
-	//	Maps function ID -> array of dependent bindings
+	// ========== STATE ==========
+	//	Generates jobID, used to prevent collisions from multiple calls
 	int jobCounter = 0
+
+	//	Maps function ID -> array of dependent bindings
 	table< int, array<ParamBinding> > funcBindings
 
 	//	Maps rpakPath -> array of dependent bindings
@@ -530,8 +545,9 @@ struct {
 } registry
 
 
-// =================== TASK HANDLING ===================
-//	These structs and comments (indicating calls) are organized consecutively.
+// ============== TASK HANDLING ==============
+//	These structs and comments (indicating calls)
+// 	are organized in consecutive call order.
 
 //	Callback: OnRegistryInit
 //	Task: Infers required parameters from passed arguments
@@ -543,7 +559,7 @@ struct TaskInferBindings {
 
 void function Registry_ProcessInfer() {
 	foreach( TaskInferBindings task in registry.queueInferBindings ) {
-		//	Get function information
+		//	Get function information - name, arguments, defaults
 		local infos = task.target.getinfos()
 		local rawArgs = infos.parameters
 		local rawDefs = ("defparams" in infos) ? infos.defparams : []
@@ -551,33 +567,34 @@ void function Registry_ProcessInfer() {
 		int defsIdx = rawArgs.len() - rawDefs.len()
 
 		//	1). Create bindings
-		array<ParamBinding> fromTable = []
-		array<ParamBinding> fromValue = []
-		foreach ( int i, string name in rawArgs ) {
-			ParamBinding b = _InferBinding(name)
+		//	Arguments cannot be seperate, .acall() requires specific order
+		array<ParamBindings> fromFunc = []
+		array<ParamBindings> fromTable = []
+		foreach (int i, string argName in rawArgs) {
+			ParamBinding b = ParamBinding.Infer(argName)
 
-			//	Handle optional parameters
+			//	Handle optional parameters: assign STATIC_VAL and fetch default
 			if (i >= defsIdx) {
 				b.dataSource = eParamSource.STATIC_VAL
 				b.staticValue = rawDefs[ i - defsIdx ]
 			}
 
-			//	Handle overrides
-			if (name in task.overrides) {
-				var newVal = task.overrides[name]
+			//	Handle overrides: two types, column and data override
+			if (argName in task.overrides) {
+				var newVal = task.overrides[argName]
 				if (typeof(newVal) == "string") {
 					//	Remap columns
-					binding.colName = expect string( newVal )
+					b.colName = expect string( newVal )
 				} else {
 					//	Curry function definition
-					binding.dataSource = eParamSource.STATIC_VAL
-					binding.staticValue = newVal
+					b.dataSource = eParamSource.STATIC_VAL
+					b.staticValue = newVal
 				}
 			}
 
-			//	Sort based on dataSource
+			//	Append: all bindings depend on func, some depend on the rpak
 			if (b.dataSource == eParamSource.DATATABLE) { fromTable.append(b); }
-			else { fromValue.append(b); }
+			fromFunc.append(b)
 		}
 
 		//	2). Add to registry
@@ -586,10 +603,8 @@ void function Registry_ProcessInfer() {
 			registry.rpakBindings[task.rpakPath].extend(fromTable)
 		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
 
-		//	Index funcBindings
-		registry.funcBindings[task.jobID] <- []
-		registry.funcBindings[task.jobID].extend(fromTable)
-		registry.funcBindings[task.jobID].extend(fromValue)
+		//	Index funcBindings: jobID prevents collisions from multiple calls
+		registry.funcBindings[task.jobID] = fromFunc
 	}
 
 	registry.queueInferBindings.clear()
@@ -607,56 +622,65 @@ void function Registry_ProcessCache() {
 		if ( task.rpakPath in registry.cache ) { continue }
 		if ( !(task.rpakPath in registry.rpakBindings) ) { continue }
 
-
-		//		Access bindings
+		//		Access data
 		var dt = GetDataTable(asset( task.rpakPath ))
 		int numRows = GetDatatableRowCount( dt )
 
-		//		Identify unique datatable columns and deduplicate
+		//		Access bindings
+		//	Only the RPak-dependent bindings need to be fetched
 		array<ParamBinding> bindings = registry.rpakBindings[task.rpakPath]
-		table<string, table> uniqueCols = {}
+
+		//	List of columns to fetch. Deduplicate to prevent multiple access
+		table<string, int[2]> colsToFetch = {}
 		foreach ( ParamBinding b in bindings ) {
-			if ( b.colName in uniqueCols ) { continue }
+			//	Skip already tracked columns
+			if (b.colName in colsToFetch) { continue; }
 
+			//	Fetch numeric index for column, log error if not found
 			int colIdx = GetDataTableColumnByName( dt, b.colName )
-			Assert( colIdx != -1, "[Registry] Column '" + b.colName + "' missing from " + task.rpakPath )
+			if (colIdx == -1) { printt("[REGISTRY] Column '" + b.colName + "' missing from " + task.rpakPath); continue; }
 
-			uniqueCols[ b.colName ] <- {
-				colIdx = colIdx,
-				colType = b.colType
-			}
+			//	Index into colsToFetch
+			colsToFetch[b.colName] <- [colIdx, b.colType]
 		}
 
-		//		Map data (precache)
-		RPakData rpak
-		rpak.numRows = numRows
-		foreach (string colName, table meta in uniqueCols) {
-			rpak.data[ colName ] <- []
-			rpak.data[ colName ].resize( numRows, null )
-			rpak.colTypes[ colName ] <- expect int( meta.colType )
+		//		Cache RPak data
+		//	Extract data
+		foreach (string colName, int[2] idxAndType in colsToFetch) {
+			//	List initialization
+			rpak.data[colName] <- []
+			rpak.data[colName].resize( numRows, null )
+
+			//	Set the column type
+			rpak.colTypes[colName] <- idxAndType[1]
+
+			//	Unbox idxAndType
+			int colIdx  = idxAndType[0]
+
+			//	Fill the array<var> inside the RPakData. Ideally done with a
+			//	lambda to prevent having to switch on the enum every time.
+			var functionref( int ) DataTableGet = null
+			switch( idxAndType[1] ) {
+				case eColType.BOOL:   DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableBool(dt, row, colIdx) }; break
+				case eColType.INT:    DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableInt(dt, row, colIdx) }; break
+				case eColType.FLOAT:  DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableFloat(dt, row, colIdx) }; break
+				case eColType.STRING: DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableString(dt, row, colIdx) }; break
+				case eColType.ASSET:  DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableAsset(dt, row, colIdx) }; break
+			}
+
+			//	Iterate over the column and fetch the entire thing.
+			array<var> colData = rpak.data[colName]	//	Setting referenced array
+			for ( int r = 0; r < numRows; r++ ) { colData[r] = DataTableGet(r); }
 		}
 
-		//		Extract data
-		foreach (string colName, table meta in uniqueCols ) {
-			int colIdx  = expect int( meta.colIdx )
-			int colType = expect int( meta.colType )
-
-			array<var> colData = rpak.data[ colName ]
-			for ( int row = 0; row < numRows; row++ ) {
-				var cellData = null
-				switch ( typeEnum ) {
-					case eColType.STRING: cellData = GetDataTableString( dt, row, colIdx ); break
-					case eColType.INT:    cellData = GetDataTableInt( dt, row, colIdx );    break
-					case eColType.FLOAT:  cellData = GetDataTableFloat( dt, row, colIdx );  break
-					case eColType.BOOL:   cellData = GetDataTableBool( dt, row, colIdx );   break
-					case eColType.ASSET:  cellData = GetDataTableAsset( dt, row, colIdx );  break
-				}
-				colData[ row ] = cellData
-			}
+		//	Link cache to bindings
+		foreach (ParamBinding b in bindings) {
+			if (!(b.colName in rpak.data)) { continue; }
+			b.value = rpak.data[b.colName]
 		}
 
 		//		Save to central state
-		registry.cache[ task.rpakPath ] <- rpak
+		registry.cache[task.rpakPath] <- rpak
 	}
 
 	registry.queueCacheBoundData.clear()
@@ -669,7 +693,7 @@ struct TaskMutateItemData {
 	void functionref( string, table<string, array<var>> ) process;
 }
 
-void function Registry_ProcessMutate() {
+void function Registry_ProcessMutate() {	//	TODO this needs to be extensively changed to make sense
 	foreach ( TaskMutateItemData task in registry.queueMutateItemData ) {
 		// Skip if the RPak isn't in memory (another script may have caused a fault)
 		if ( !(task.rpakPath in registry.cache) ) { return }
@@ -679,7 +703,6 @@ void function Registry_ProcessMutate() {
 		task.process( task.rpakPath, gridData )
 	}
 }
-
 
 //	Callback: OnRegistryBake
 //	Task: Bakes cached data into (Sub)ItemData the game understands
@@ -697,41 +720,39 @@ void function Registry_ProcessBake( array<TaskBakeItemData> queue ) {
 		//	Uncached data
 		if ( !(task.rpakPath in registry.cache) ) { continue }
 
-		//		Functionality
-		//	Retrieve cached + bindings
-		RPakData rpak = registry.cache[ task.rpakPath ]
-		array<ParamBinding> bindings = registry.funcBindings[ task.jobID ]
+		//		Extract cached data & function bindings
+		RPakData rpak = registry.cache[task.rpakPath]
+		array<ParamBinding> bindings = registry.funcBindings[task.jobID]
 
-		for (int i = 0; i < rpak.numRows; i++) {
-			// Squirrel '.acall()' always requires the root environment at Index 0
+		//		Define ParamBinding.Get(n) functions
+		foreach (ParamBinding b in fromFunc) {
+
+
+			switch (b.dataSource) {
+				case eParamSource.ROW_INDEX:	b.Get = int function( int r ) : (b) { return r; }; break;
+				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
+				case eParamSource.DATATABLE:
+					array<var> arr = expect array<var>(b.value)
+
+					if (b.paramName == "itemType") {
+						string typeStr = expect string( arr[r] )
+						b.Get = var function( int r ) : (arr) {
+							string typeStr = expect string( arr[r] )
+                            return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : -1
+						}; break;
+					}
+
+					b.Get = var function( int r ) : (arr) { return arr[r] }; break;
+			}
+		}
+
+		//		Iterate over table
+		for (int r = 0; r < rpak.numRows; r++) {
+			//	Squirrel '.acall()' always requires the root environment at Index 0
 			array args = [ getroottable() ]
 
 			//	Iterate over bindings
-			foreach ( ParamBinding b in bindings ) {
-				var finalValue = null
-				switch ( b.dataSource ) {
-					case eParamSource.ROW_INDEX:
-						finalValue = row
-						break
-
-					case eParamSource.STATIC_VAL:
-						finalValue = b.staticValue
-						break
-
-					case eParamSource.DATATABLE:
-						//	Locate cell
-						var rawValue = rpak.data[b.colName][i]
-
-						// Core Engine Translation: "primary" -> eItemTypes.PILOT_PRIMARY
-						finalValue = rawValue
-						if ( b.paramName == "itemType" && type(rawValue) == "string" ) {
-							string typeStr = expect string( rawValue )
-							finalValue = ( typeStr in eItemTypes ) ? eItemTypes[ typeStr ] : -1
-						}
-				}
-
-				args.append( finalValue )
-			}
+			foreach ( ParamBinding b in bindings ) { args.append(b.Get(r)); }
 
 			// Fire the deferred function
 			task.target.acall( args )

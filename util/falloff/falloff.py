@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 
 from solver import solve
+from ballistic import BallisticFalloff, ShotgunFalloff
 
 # ===== Configuration =====
 # Sourcing
