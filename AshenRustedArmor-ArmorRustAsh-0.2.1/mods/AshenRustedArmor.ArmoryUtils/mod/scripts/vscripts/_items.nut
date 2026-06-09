@@ -440,7 +440,7 @@ enum eParamSource { DATATABLE, ROW_INDEX, STATIC_VAL }
 
 //		ParamBinding
 //	Links a column in registry.cache to a function parameter
-class ParamBinding {
+struct ParamBinding {
 	//	Binding destination & source
 	string argName	//	Parsed or given parameter name
 	string colName	//	Target DataTable column name
@@ -453,59 +453,61 @@ class ParamBinding {
 
 	//	Value retrieval function
 	var functionref( int ) Get = null			//	Getter assigned in ProcessBake
+}
 
-	//	Constructors
-	constructor( string colName, int dataType, int dataSource = eParamSource.DATATABLE ) {
-		this.colName = colName
+ParamBinding function CreateParamBinding( string colName, int dataType, int dataSource = eParamSource.DATATABLE ) {
+	ParamBinding b
+	b.colName = colName
 
-		this.dataType = dataType
-		this.dataSource = dataSource
-	}
+	b.dataType = dataType
+	b.dataSource = dataSource
 
-	ParamBinding function Infer( string argName ) {
-		//	Clone from inference
-		ParamBinding b
-		string lower = argName.tolower()
-		if (lower in registryInferenceMap) { b = clone registryInferenceMap[lower]; }
+	return b
+}
 
-		//	Set other parameters
-		b.argName = argName
+ParamBinding function InferParamBinding( string argName ) {
+	//	Clone from inference
+	ParamBinding b
+	string lower = argName.tolower()
+	if (lower in registryInferenceMap) { b = clone registryInferenceMap[lower]; }
 
-		return b
-	}
+	//	Set other parameters
+	b.argName = argName
+
+	return b
 }
 
 //	Pre-computed map for strict O(1) inference matching
 table< string, ParamBinding > registryInferenceMap = {
 	// Structural Indices
-	datatableindex	= ParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
-	index			= ParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
-	rowidx			= ParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
+	datatableindex	= CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
+	index			= CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
+	rowidx			= CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX ),
 
 	// Types & References
-	itemtype		= ParamBinding( "type",			eColType.STRING ),
-	ref				= ParamBinding( "ref",			eColType.STRING ),
-	itemref			= ParamBinding( "itemRef",		eColType.STRING ),
-	parentref		= ParamBinding( "parentRef",	eColType.STRING ),
-	weaponref		= ParamBinding( "weaponRef",	eColType.STRING ),
-	nonprimeref		= ParamBinding( "nonPrimeRef",	eColType.STRING ),
+	itemtype		= CreateParamBinding( "type",			eColType.STRING ),
+	ref				= CreateParamBinding( "ref",			eColType.STRING ),
+	itemref			= CreateParamBinding( "itemRef",		eColType.STRING ),
+	parentref		= CreateParamBinding( "parentRef",	eColType.STRING ),
+	weaponref		= CreateParamBinding( "weaponRef",	eColType.STRING ),
+	nonprimeref		= CreateParamBinding( "nonPrimeRef",	eColType.STRING ),
 
 	// Display Data
-	name           = ParamBinding( "name",			eColType.STRING ),
-	desc           = ParamBinding( "description",	eColType.STRING ),
-	longdesc       = ParamBinding( "description",	eColType.STRING ),
-	image          = ParamBinding( "image",			eColType.ASSET ),
-	model          = ParamBinding( "model",			eColType.ASSET ),
+	name           = CreateParamBinding( "name",			eColType.STRING ),
+	desc           = CreateParamBinding( "description",	eColType.STRING ),
+	longdesc       = CreateParamBinding( "description",	eColType.STRING ),
+	image          = CreateParamBinding( "image",			eColType.ASSET ),
+	model          = CreateParamBinding( "model",			eColType.ASSET ),
 
 	// Stats & Booleans
-	cost           = ParamBinding( "cost",			eColType.INT ),
-	hidden         = ParamBinding( "hidden",		eColType.BOOL ),
-	isdamagesource = ParamBinding( "damageSource",	eColType.BOOL ),
+	cost           = CreateParamBinding( "cost",			eColType.INT ),
+	hidden         = CreateParamBinding( "hidden",		eColType.BOOL ),
+	isdamagesource = CreateParamBinding( "damageSource",	eColType.BOOL ),
 
 	// Special Custom Parameters
-	decalindex     = ParamBinding( "decalIndex",	eColType.INT ),
-	skinindex      = ParamBinding( "skinIndex",		eColType.INT ),
-	skintype       = ParamBinding( "skinType",		eColType.INT )
+	decalindex     = CreateParamBinding( "decalIndex",	eColType.INT ),
+	skinindex      = CreateParamBinding( "skinIndex",		eColType.INT ),
+	skintype       = CreateParamBinding( "skinType",		eColType.INT )
 }
 
 
@@ -571,7 +573,7 @@ void function Registry_ProcessInfer() {
 		array<ParamBindings> fromFunc = []
 		array<ParamBindings> fromTable = []
 		foreach (int i, string argName in rawArgs) {
-			ParamBinding b = ParamBinding.Infer(argName)
+			ParamBinding b = InferParamBinding(argName)
 
 			//	Handle optional parameters: assign STATIC_VAL and fetch default
 			if (i >= defsIdx) {
