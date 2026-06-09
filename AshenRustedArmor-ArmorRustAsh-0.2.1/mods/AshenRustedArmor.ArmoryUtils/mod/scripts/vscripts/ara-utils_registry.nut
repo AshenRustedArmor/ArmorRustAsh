@@ -407,15 +407,17 @@ void function ArmoryUtil_RegisterMoveItem(
 	int oldSlotDisplay = displayData.slot
 
 	//	Skip execution if completely moved
-	if ( oldSlotItem == newSlot
-		&& oldSlotDisplay == newSlot ) { return }
+	if ( oldSlotItem == newSlot && oldSlotDisplay == newSlot ) { return }
 
 	//		Functionality
-	//	Fetch item ref array pointers
+	//	This fetches file.itemsOfType[ itemType ]
 	array<string> oldTypeRefs = GetAllRefsOfType( oldSlotItem )
 	array<string> newTypeRefs = GetAllRefsOfType( newSlot )
 
-	//	SRemap to new slot location
+	// This fetches file.allItems
+	array < GlobalItemRef > allGlobalRefs = GetAllItemREfs()
+
+	//	Remap to new slot location
 	int oldTypeIndex = oldTypeRefs.find( weaponRef )
 	if( oldTypeIndex != -1 ) { oldTypeRefs.remove(oldTypeIndex) }
 	newTypeRefs.append( weaponRef )

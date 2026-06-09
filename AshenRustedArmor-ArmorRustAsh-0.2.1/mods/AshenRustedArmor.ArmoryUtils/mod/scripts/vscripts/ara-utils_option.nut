@@ -11,12 +11,12 @@ class Option {
 	bool function IsNone() { return !isSome }
 
 	var function expect( string msg ) {
-		if (!isSome) { Assert( false, msg ) }
+		if (!isSome) { throw msg }
 		return value
 	}
 
 	var function unwrap() {
-		if (!isSome) { Assert(false, MSG_UNWRAP_NONE) }
+		if (!isSome) { throw msg }
 		return value
 	}
 
