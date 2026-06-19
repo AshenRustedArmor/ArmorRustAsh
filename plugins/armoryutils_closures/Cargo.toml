@@ -1,0 +1,11 @@
+[package]
+name = "armoryutils_closures"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+name = "armoryutils_closures"
+
+[dependencies]
+rrplug = "4.3.0"

@@ -27,12 +27,12 @@
 //			"Path": "weapons/_wave.nut",
 //			"RunOn": "( CLIENT || SERVER ) && MP"
 //		},
-		{
-            "Path": "_equipment.nut",
-            "RunOn": "CLIENT || SERVER || UI",
-            "UICallback": { "Before": "ArmoryBalance_Equipment_Init" },
-			"ServerCallback": { "Before": "ArmoryBalance_Equipment_Init" },
-			"ClientCallback": { "Before": "ArmoryBalance_Equipment_Init" }
-        }
+//		{
+//            "Path": "_equipment.nut",
+//            "RunOn": "CLIENT || SERVER || UI",
+//            "UICallback": { "Before": "ArmoryBalance_Equipment_Init" },
+//			"ServerCallback": { "Before": "ArmoryBalance_Equipment_Init" },
+//			"ClientCallback": { "Before": "ArmoryBalance_Equipment_Init" }
+//        }
 	]
 }

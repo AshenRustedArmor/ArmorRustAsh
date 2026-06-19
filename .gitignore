@@ -8,6 +8,8 @@ Desktop.ini
 copy.bat
 .clang-format
 
+plugins/*/target
+
 # ===== Backups / Tempfiles =====
 *.bak
 *.tmp
