@@ -528,7 +528,7 @@ struct RPakData {
 struct TaskInferBindings {
 	int jobID
 	asset rpakPath
-	void functionref(...) target
+	var target
 	table overrides
 }
 
@@ -549,7 +549,7 @@ struct TaskMutateItemData {
 struct TaskBakeItemData {
 	int jobID
 	asset rpakPath	//	TODO temp fix, Bake shouldn't know about the rpaks
-	void functionref(...) target
+	var target
 }
 
 struct {
@@ -768,7 +768,7 @@ void function Registry_ProcessBake( array<TaskBakeItemData> queue ) {
 	}
 }
 
-void function Registry_RPakJob( asset rpakPath, void functionref(...) target, table overrides = {} ) {
+void function Registry_RPakJob( asset rpakPath, var target, table overrides = {} ) {
 	//	Extract factory function and overrides from vargv
 //	Assert( vargc >= 1, "[REGISTRY] RegisterRPakJob requires a target factory function!" )
 
@@ -1105,6 +1105,8 @@ void function InitItems()
 
 		CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
 	} //*/
+
+	var passive_func = ArmoryUtils_ClosureBox( CreatePassiveData )
 
 	//InitInferenceMap()
 	//Registry_RPakJob( $"datatable/pilot_passives.rpak", CreatePassiveData )
