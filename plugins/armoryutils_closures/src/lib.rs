@@ -1,5 +1,7 @@
-use rrplug::prelude::*;
-mod closures;
+use rrplug::{
+	bindings::squirreldatatypes::{SQObject},
+	prelude::*,
+};
 
 #[derive(Debug)]
 pub struct ArmoryPluginClosures;
@@ -14,7 +16,7 @@ impl Plugin for ArmoryPluginClosures {
 	fn new(_reloaded: bool) -> Self {
 		log::info!("[ArmoryUtils] Registry Plugin Initialized!");
 
-		register_sq_functions(closures::closure_box);
+		register_sq_functions(closure_box);
 
 		Self {}
 	}
@@ -23,3 +25,14 @@ impl Plugin for ArmoryPluginClosures {
 	}
 
 entry!(ArmoryPluginClosures);
+
+// ======================================================
+//						Boxing
+// ======================================================
+/// Bounces a typed closure off the FFI boundary to strip its type.
+/// Setting 'ReturnOverwrite' is unnecessary as the default is already 'var'.
+#[rrplug::sqfunction(
+	VM = "SERVER | CLIENT | UI", 
+	ExportName = "ArmoryUtils_ClosureBox"
+)]
+pub fn closure_box(obj: SQObject) -> SQObject { obj }
