@@ -14,7 +14,7 @@ impl Plugin for ArmoryPluginClosures {
 	fn new(_reloaded: bool) -> Self {
 		log::info!("[ArmoryUtils] Registry Plugin Initialized!");
 
-		register_sq_functions(example_function);
+		register_sq_functions(closures::closure_box);
 
 		Self {}
 	}
@@ -23,8 +23,3 @@ impl Plugin for ArmoryPluginClosures {
 	}
 
 entry!(ArmoryPluginClosures);
-
-#[rrplug::sqfunction(VM = "CLIENT | UI | SERVER", ExportName = "ExampleFunction")]
-fn example_function(name: String) -> String {
-    format!("hello, {}", name)
-}

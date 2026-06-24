@@ -28,6 +28,6 @@ macro_rules! get_handle {
 /// Setting 'ReturnOverwrite' is unnecessary as the default is already 'var'.
 #[rrplug::sqfunction(
 	VM = "SERVER | CLIENT | UI", 
-	ExportName = "ArmoryUtils_ClosureBox",
+	ExportName = "ArmoryUtils_ClosureBox"
 )]
 pub fn closure_box(obj: SQObject) -> SQObject { obj }
