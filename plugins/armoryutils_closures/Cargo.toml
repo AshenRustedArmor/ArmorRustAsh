@@ -9,3 +9,5 @@ name = "armoryutils_closures"
 
 [dependencies]
 rrplug = "4.3.0"
+serde_json = "1.0.150"
+sqparse = "0.3.0"
