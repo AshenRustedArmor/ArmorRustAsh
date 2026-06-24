@@ -1090,7 +1090,7 @@ void function InitItems()
 	// ///////////////////
 	// PILOT PASSIVE DATA
 	// ///////////////////
-	/*
+	//*
 	dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
 	numRows = GetDatatableRowCount( dataTable )
 	for ( int i = 0; i < numRows; i++ )
@@ -1106,9 +1106,9 @@ void function InitItems()
 		CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
 	} //*/
 
-	InitInferenceMap()
-	Registry_RPakJob( $"datatable/pilot_passives.rpak", CreatePassiveData )
-	Registry_ExecutePipeline()
+	//InitInferenceMap()
+	//Registry_RPakJob( $"datatable/pilot_passives.rpak", CreatePassiveData )
+	//Registry_ExecutePipeline()
 
 	// ///////////////////
 	// SUIT DATA
