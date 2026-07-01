@@ -416,6 +416,7 @@ struct
 	// northstar custom hooks
 	array<void functionref()> itemRegistrationCallbacks
 } file
+
 /// ╔══════════════════════════════════════════════════════════════════════════════════╗
 /// ║                                                                                  ║
 /// ║    █████████  █████  █████  █████████  ███████████    ███████    ██████   ██████ ║
@@ -703,7 +704,6 @@ void function Registry_ProcessBindings() {
 	foreach (TaskBindings_Mutator task in registry.queueBindings_Mutator) {
 		//	Get function information - name, arguments, defaults
 		local infos = task.target.getinfos()
-
 		array rawArgs = expect array(infos.parameters)
 		if (rawArgs.len() > 0 && rawArgs[0] == "this") { rawArgs.remove(0) }
 
@@ -726,7 +726,11 @@ void function Registry_ProcessBindings() {
 
 				newInfer.rpakPath	= expect asset(key)
 				newInfer.target		= null
-				newInfer.overrides	= expect table(args)
+				newInfer.overrides	= {}
+				foreach ( arg in expect array(args) ) {
+					arg = expect string(arg)
+					newInfer.overrides[arg] <- arg
+				}
 
 				registry.queueBindings_Infer.append(newInfer)
 				break;
@@ -742,7 +746,9 @@ void function Registry_ProcessBindings() {
 				break;
 
 			default:
-				//	Throw error
+				throw "REGISTRY [BIND]: ERROR: Job " + task.jobID +
+					" specified invalid key type '" + typeof(key) +
+					"' in rpak2args. Keys must be asset or string."
 				break;
 		}}
 	}
@@ -793,7 +799,16 @@ void function Registry_ProcessBindings() {
 			}
 
 			//	Append: all bindings depend on func, some depend on the rpak
-			if (b.dataSource == eParamSource.DATATABLE) { fromTable.append(b); }
+			if (b.dataSource == eParamSource.DATATABLE) {
+				if (b.colName == "") {
+					throw "REGISTRY [BIND]: ERROR: Job " +
+						task.jobID + " requested parameter '" + argName +
+						"' which cannot be auto-inferred from RPak '" + task.rpakPath +
+						"'. Did you forget an override declaration?"
+				}
+
+				fromTable.append(b)
+			}
 			fromFunc.append(b)
 		}
 
@@ -819,7 +834,7 @@ void function Registry_ProcessCache() {
 		//	We shouldn't be revisiting an rpak, since bindings are grouped by rpak
 		if ( task.rpakPath in registry.cache ) { continue }
 		if ( !(task.rpakPath in registry.rpakBindings) ) { continue }
-		print("[REGISTRY] CACHE: Caching " + task.rpakPath)
+		string log = "REGISTRY [CCH0]: " + task.rpakPath + "\"#["
 
 		//		Access data
 		var dt = GetDataTable(task.rpakPath)
@@ -832,26 +847,22 @@ void function Registry_ProcessCache() {
 		//	List of columns to fetch. Deduplicate to prevent multiple access
 		table< string, array<int> > colsToFetch = {}
 		foreach ( ParamBinding b in bindings ) {
-			string msg = "[REGISTRY] CACHE PREPASS: Column " +b.colName
+			log += "\"" + b.colName + "\""
 
 			//	Skip already tracked columns
-			if (b.colName in colsToFetch) {
-				printt(msg + " skipped, already cached");
-				continue
-			}
+			if (b.colName in colsToFetch) { log += " (skipped), "; continue; }
 
-			//	Fetch numeric index for column, log error if not found
+			//	Fetch numeric index for column, throw error if not found
 			int colIdx = GetDataTableColumnByName( dt, b.colName )
 			if (colIdx == -1) {
-				printt(msg + " missing!")
-				continue
+				throw "REGISTRY [CCH0]: " + task.rpakPath + "#\"" + b.colName + "\" does not exist"
 			}
-
 
 			//	Index into colsToFetch
 			colsToFetch[b.colName] <- [colIdx, b.dataType]
-			printt(msg + " added [" +colIdx+ ", " + b.dataType + "]");
+			log += " (" + colIdx + ", " + b.dataType + "), "
 		}
+		printt(log + "\b\b]")
 
 		//		Cache RPak data
 		RPakData rpak
@@ -882,29 +893,20 @@ void function Registry_ProcessCache() {
 			//	Iterate over the column and fetch the entire thing.
 			for ( int r = 0; r < numRows; r++ ) {
 				colData[r] = DataTableGet(r);
-				printt("[REGISTRY] CACHE PASS: colData[" +r+ "] = " +colData[r])
 			}
 		}
 
 		//	Link cache to bindings
-		string msg = "[REGISTRY] CACHE: Keys = ["
-		foreach (k, v in rpak.data) { msg += "'"+k+"',"}
-		printt(msg+"]")
-
 		foreach (ParamBinding b in bindings) {
-			if (!(b.colName in rpak.data)) {
-				printt("[REGISTRY] CACHE POSTPASS: Skipping binding " + b.colName);
-			    continue
-			}
+			if (!(b.colName in rpak.data)) { continue; }
 
 			array<var> colData = rpak.data[b.colName]
 			b.value = colData
-
-			printt("[REGISTRY] CACHE POSTPASS: Binding " +b.colName+ " to " + typeof(b.value));
 		}
 
 		//		Save to central state
 		registry.cache[task.rpakPath] <- rpak
+		printt("REGISTRY [CCH1]: Cached asset grid for RPak: " + task.rpakPath + "\" (" + numRows + " rows)")
 	}
 
 	//		Clear queues
@@ -912,17 +914,35 @@ void function Registry_ProcessCache() {
 }
 
 void function Registry_ProcessMutate() {
-	//		Modification mutators
 	foreach ( TaskMutate_Modify task in registry.queueMutate_Modify ) {
-		// Skip if the RPak isn't in memory (another script may have caused a fault)
-		//if ( !(task.rpakPath in registry.cache) ) { return }
-		//RPakData gridData = registry.cache[task.rpakPath]
+		if (!(task.jobID in registry.funcBindings)) {
+		    continue;
+		}
 
-		// Pass the flat grid to the modder's custom callback
-		//task.process( gridData )
+		array<ParamBinding> bindings = registry.funcBindings[ task.jobID ]
+		array args = [ getroottable() ]
+		string log = ""
+
+		foreach ( ParamBinding b in bindings ) {
+			//	Validate value state before calling with parameters
+			if ( b.value == null ) {
+				printt("REGISTRY [MUT8]: Processing job " + task.jobID + " encountered error | Log: [" + log + "]")
+				throw "REGISTRY [MUT8]: Mutator job " +
+					task.jobID + " parameter '" + b.argName +
+					"' failed to resolve data bindings prior to execution."
+			}
+
+			// Pass reference of the full column data array or static values directly
+			args.append( b.value )
+			log += b.argName + ": " + typeof( b.value ) + ", "
+		}
+
+		printt( "REGISTRY [MUT8]: Executing job " + task.jobID + " | Input Schema: ( " + log + ")" )
+		task.target.acall( args )
 	}
 
 	//		Clear queues
+	registry.queueMutate_Modify.clear()
 }
 
 void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
@@ -938,26 +958,22 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 		//		Extract cached data & function bindings
 		RPakData rpak = registry.cache[task.rpakPath]
 		array<ParamBinding> bindings = registry.funcBindings[task.jobID]
-		//local targetFunc = getroottable()[task.target]
+		string log = ""
 
 		//		Define ParamBinding.Get(n) functions
 		foreach (ParamBinding b in bindings) {
-			string msg = "[REGISTRY] BAKE: Baking arg '" +b.argName+ "' type '"
-			foreach( s, i in eParamSource ) { if (i == b.dataSource) { msg += s; } }
-			printt(msg + "' column '" + b.colName + "'")
-
+			log += b.argName + ", "
 			switch (b.dataSource) {
 				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
 				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
 				case eParamSource.DATATABLE:
-					printt("[REGISTRY] BAKE: Binding '" +b.colName+ "' has value type '" + typeof(b.value) + "'")
 					if (b.value == null) {
-						printt("[REGISTRY] BAKE: Catastrophic error, binding '" +b.colName+ "' has null value")
-						break;
+						printt("REGISTRY [BAKE]: Processing job " + task.jobID + " encountered error | Log: [" + log + "]")
+						throw "REGISTRY [BAKE]: Crashed on job " +
+							task.jobID + ", parameter '" + b.colName + "' has null value"
 					}
 
 					array arr = expect array(b.value)
-
 					if (b.argName == "itemType") {
 						b.Get = var function( int r ) : (arr) {
 							string typeStr = expect string( arr[r] )
@@ -968,6 +984,7 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 					b.Get = var function( int r ) : (arr) { return arr[r] }; break;
 			}
 		}
+		printt("REGISTRY [BAKE]: Processing job " + task.jobID + " | Log: [" + log + "]")
 
 		//		Iterate over table
 		for (int r = 0; r < rpak.numRows; r++) {
@@ -976,12 +993,13 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 
 			//	Iterate over bindings
 			foreach ( ParamBinding b in bindings ) {
-				args.append(b.Get(r))	//	This gets an "attempt to call null" error
-			}
+				if ( b.Get == null ) { throw "REGISTRY [BAKE]: ERROR: Call abort on job " +
+					task.jobID + ", Row " + r + ". Assigned getter for parameter '" +
+					b.argName + "' resolved to null."
+				}
 
-			string msg = "[REGISTRY] Bake: Calling with args ["
-			foreach ( a in args ) { msg += typeof(a) + ","}
-			printt(msg + "]")
+				args.append(b.Get(r))
+			}
 
 			// Fire the deferred function
 			task.target.acall( args )
@@ -989,6 +1007,7 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 	}
 
 	//		Clear queues
+	registry.queueBake_ItemData.clear()
 }
 
 void function Registry_ExecutePipeline() {
@@ -1283,26 +1302,65 @@ void function InitItems()
 	InitInferenceMap()
 
 	//	Passives
-	Registry_RPakJob($"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-		ref = "passive" })
+	Registry_RPakJob( $"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
+		ref="passive" })
 
-	//	Suits
-	Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
-		ref="type", itemType=eItemTypes.PILOT_SUIT })
+	// // Suits
+	// Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
+	// 	ref="type", itemType=eItemTypes.PILOT_SUIT })
+
+	// CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
+	// CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
+
+	// //	Executions
+	// Registry_RPakJob( $"datatable/pilot_executions.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
+	// 	itemType=eItemTypes.PILOT_EXECUTION })
+
+	//		Execute
+	Registry_ExecutePipeline()
+	//*/
+
+	/// //////////////////
+	/// PILOT PASSIVE DATA
+	/// //////////////////
+
+	// dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef      = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "passive" ) )
+	// 	int itemType        = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	string name			= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image			= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	bool hidden			= GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost			= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
+	// }
+
+
+	/// //////////////////
+	/// SUIT DATA
+	/// //////////////////
+
+	dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
+		asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+		CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
+	}
 
 	CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
 
-	//	Executions
-	Registry_RPakJob( $"datatable/pilot_executions.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-		itemType=eItemTypes.PILOT_EXECUTION })
-
-	//		Execute
-	Registry_ExecutePipeline()
-
-	// ///////////////////
-	// PILOT EXECUTION DATA
-	// ///////////////////
+	/// ////////////////////
+	/// PILOT EXECUTION DATA
+	/// ////////////////////
 
 	dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
 	numRows = GetDatatableRowCount( dataTable )
@@ -1320,6 +1378,7 @@ void function InitItems()
 
 		CreatePassiveData( i, eItemTypes.PILOT_EXECUTION, hidden, ref, name, description, description, image, cost )
 	}
+
 	// ///////////////////
 	// TITAN EXECUTION DATA
 	// ///////////////////
