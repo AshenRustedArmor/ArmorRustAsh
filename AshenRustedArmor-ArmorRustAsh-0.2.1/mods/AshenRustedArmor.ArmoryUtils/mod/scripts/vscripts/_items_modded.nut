@@ -212,11 +212,14 @@ ParamBinding function InferParamBinding( string argName ) {
 	//	Clone from inference
 	ParamBinding b
 	string lower = argName.tolower()
+
 	if (lower in inferences) { b = clone inferences[lower]; }
+	else {
+	    b.colName = argName;
+	}
 
-	//	Set other parameters
+	//	We can always assume the argName is the passed value, override later
 	b.argName = argName
-
 	return b
 }
 
@@ -325,57 +328,6 @@ void function Registry_ProcessBindings() {
 		}
 		bp.destArray = registry.funcBindings[task.jobID]
 		registry.queueBindings_Blueprint.append(bp)
-
-		/*
-		//	1). Create bindings
-		//	Arguments cannot be seperate, .acall() requires specific order
-		array<ParamBinding> fromFunc = []
-		array<ParamBinding> fromTable = []
-		foreach (int i, string argName in rawArgs) {
-			ParamBinding b = InferParamBinding(argName)
-
-			//	Handle optional parameters: assign STATIC_VAL and fetch default
-			if (i >= defsIdx) {
-				b.dataSource = eParamSource.STATIC_VAL
-				b.value = rawDefs[ i - defsIdx ]
-			}
-
-			//	Handle overrides: two types, column and data override
-			if (argName in task.overrides) {
-				var newVal = task.overrides[argName]
-				if (typeof(newVal) == "string") {
-					//	Remap columns
-					b.colName = expect string( newVal )
-				} else {
-					//	Curry function definition
-					b.dataSource = eParamSource.STATIC_VAL
-					b.value = newVal
-				}
-			}
-
-			//	Append: all bindings depend on func, some depend on the rpak
-			if (b.dataSource == eParamSource.DATATABLE) {
-				if (b.colName == "") {
-					throw "REGISTRY [BIND]: ERROR: Job " +
-						task.jobID + " requested parameter '" + argName +
-						"' which cannot be auto-inferred from RPak '" + task.rpakPath +
-						"'. Did you forget an override declaration?"
-				}
-
-				fromTable.append(b)
-			}
-			fromFunc.append(b)
-		}
-
-		//	2). Add to registry
-		//	Index/extend rpakBindings
-		if( task.rpakPath in registry.rpakBindings ) {
-			registry.rpakBindings[task.rpakPath].extend(fromTable)
-		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
-
-		//	Index funcBindings: jobID prevents collisions from multiple calls
-		registry.funcBindings[task.jobID] <- fromFunc
-		//*/
 	}
 
 	//		Mutator bindings
@@ -414,7 +366,7 @@ void function Registry_ProcessBindings() {
 			default:
 				throw "REGISTRY [BIND]: ERROR: Job " + task.jobID +
 					" specified invalid key type '" + typeof(key) +
-					"' in rpak2args. Keys must be asset or string."
+					"'. Expected asset, string, or tuple."
 				break;
 		}}
 
@@ -423,58 +375,21 @@ void function Registry_ProcessBindings() {
 		}
 		bp.destArray = registry.mut8Bindings[task.jobID]
 		registry.queueBindings_Blueprint.append(bp)
-
-/*
-		//	Get function information - name, arguments, defaults
-
-		//	1). Inherit bindings from the parent function
-		//	Iterate over rawArgs and remove already cached
-		//array<ParamBinding> fromMutate = []
-		array<ParamBinding> fromParent = registry.funcBindings[task.jobID]
-		foreach (ParamBinding b in fromParent) {
-			if( !(b.argName in rawArgs) ) { continue; }
-			rawArgs.fastremovebyvalue(b.argName)
-		//	fromMutate.append(b)
-		}
-
-		//	2). Iterate over the args
-		foreach (var key, var args in task.rpak2args) { switch (typeof(key)) {
-			case "asset":
-				TaskBindings_Factory newInfer
-				newInfer.jobID		= task.jobID
-				newInfer.priority	= task.priority + 1
-
-				newInfer.rpakPath	= expect asset(key)
-				newInfer.target		= null
-				newInfer.overrides	= {}
-				foreach ( arg in expect array(args) ) {
-					arg = expect string(arg)
-					newInfer.overrides[arg] <- arg
-				}
-
-				registry.queueBindings_Factory.append(newInfer)
-				break;
-
-			case "string":
-				ParamBinding b
-				b.argName = expect string(key)
-
-				b.dataSource = eParamSource.STATIC_VAL
-				b.value = args
-
-				registry.funcBindings[task.jobID].append(b)
-				break;
-
-			default:
-				throw "REGISTRY [BIND]: ERROR: Job " + task.jobID +
-					" specified invalid key type '" + typeof(key) +
-					"' in rpak2args. Keys must be asset or string."
-				break;
-		}} //*/
 	}
 
 	//		Blueprints
 	foreach (TaskBindings_Blueprint task in registry.queueBindings_Blueprint) {
+		foreach (string key, var val in task.overrides) {
+			bool isValid = false
+			foreach( string argName in task.rawArgs) {
+				isValid = (argName == key) || isValid
+			}
+
+			if (!isValid) {
+				throw "REGISTRY [BIND]: ERROR: Job " + task.jobID +
+					" override '" + key + "' invalid: target lacks this param"
+			}
+		}
 		//	1). Create bindings
 		//	Arguments cannot be seperate, .acall() requires specific order
 		array<ParamBinding> fromFunc = task.destArray
@@ -488,16 +403,29 @@ void function Registry_ProcessBindings() {
 				b.value = task.rawDefs[ i - task.defsIdx ]
 			}
 
-			//	Handle overrides: two types, column and data override
+			//	Handle overrides: column, type, and data override
 			if (argName in task.overrides) {
 				var newVal = task.overrides[argName]
-				if (typeof(newVal) == "string") {
-					//	Remap columns
-					b.colName = expect string( newVal )
-				} else {
-					//	Curry function definition
-					b.dataSource = eParamSource.STATIC_VAL
-					b.value = newVal
+				switch (typeof(newVal)) {
+					case "array":
+						array arr = expect array(newVal)
+						b.colName = argName
+
+						//	Column type override
+						b.dataType = expect int(arr[0])
+
+						//	Column name override
+						if (arr.len()< 2) { break; }
+						b.colName = expect string(arr[1])
+						break;
+					case "string":
+						//b.dataSource = eParamSource.DATATABLE
+						b.colName = expect string(newVal)
+						break;
+					default:
+						b.dataSource = eParamSource.STATIC_VAL
+						b.value = newVal
+						break;
 				}
 			}
 
@@ -505,19 +433,55 @@ void function Registry_ProcessBindings() {
 			if (b.dataSource == eParamSource.DATATABLE) {
 				if (b.colName == "") {
 					throw "REGISTRY [BIND]: ERROR: Job " +
-						task.jobID + " requested parameter '" + argName +
-						"' which cannot be auto-inferred from RPak '" + task.rpakPath +
-						"'. Did you forget an override declaration?"
+						task.jobID + " param '" + argName +
+						"' cannot be inferred from '" + task.rpakPath +
+						"'. Missing override?"
 				}
 
 				fromTable.append(b)
 			}
 
 			fromFunc.append(b)
-			//fromFunc.append(b)
 		}
 
-		//	2). Add to registry
+		//	2). Initialize get functions
+		//	This was initially done in the Bake phase, but has been moved here
+		//	to allow the Mutate phase to access the Get functions. 'fromFunc'
+		//	contains all bindings, so only this needs to be mapped over.
+		string logStr = ""
+		foreach (ParamBinding b in fromFunc) {
+			logStr += b.argName + ", "
+			switch (b.dataSource) {
+				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
+				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
+				case eParamSource.DATATABLE:
+					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task, logStr) {
+						if (b.value == null) {
+							printt("REGISTRY [BIND]: Processing job " + task.jobID + " encountered error | Log: [" + logStr + "]")
+							throw "REGISTRY [BIND]: Crashed on job " +
+								task.jobID + ", parameter '" +
+								b.colName + "' has null value"
+						}
+
+						array arr = expect array(b.value)
+						string typeStr = expect string( arr[r] )
+						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
+					}; break; }
+
+					b.Get = var function( int r ) : (b, task, logStr) {
+						if (b.value == null) {
+							printt("REGISTRY [BIND]: Processing job " + task.jobID + " encountered error | Log: [" + logStr + "]")
+							throw "REGISTRY [BIND]: Crashed on job " +
+								task.jobID + ", parameter '" +
+								b.colName + "' has null value"
+						}
+						return (expect array(b.value))[r]
+					}; break;
+			}
+		}
+		printt("REGISTRY [BIND]: Setting getters for job " + task.jobID + " | Log: [" + logStr + "]")
+
+		//	3). Add to registry
 		//	Index/extend rpakBindings
 		if( task.rpakPath in registry.rpakBindings ) {
 			registry.rpakBindings[task.rpakPath].extend(fromTable)
@@ -627,30 +591,67 @@ void function Registry_ProcessCache() {
 
 void function Registry_ProcessMutate() {
 	foreach ( TaskMutate_Modify task in registry.queueMutate_Modify ) {
-		if (!(task.jobID in registry.funcBindings)) {
-		    continue;
-		}
+		if (!(task.jobID in registry.mut8Bindings)) { continue; }
 
-		array<ParamBinding> bindings = registry.funcBindings[ task.jobID ]
-		array args = [ getroottable() ]
-		string log = ""
+		array<ParamBinding> bindings = registry.mut8Bindings[ task.jobID ]
 
+		int numRows = 0
+		string logStr = ""
 		foreach ( ParamBinding b in bindings ) {
 			//	Validate value state before calling with parameters
-			if ( b.value == null ) {
-				printt("REGISTRY [MUT8]: Processing job " + task.jobID + " encountered error | Log: [" + log + "]")
-				throw "REGISTRY [MUT8]: Mutator job " +
-					task.jobID + " parameter '" + b.argName +
-					"' failed to resolve data bindings prior to execution."
+			if (b.dataSource == eParamSource.DATATABLE) {
+				if (b.value == null) {
+					printt("REGISTRY [MUT8]: Error on job " + task.jobID + " | Log: [" + logStr + "]")
+					throw "REGISTRY [MUT8]: Job " + task.jobID + " param '" + b.argName + "' has unresolved data binding."
+				}
+
+				if (numRows == 0) { numRows = (expect array( b.value )).len(); }
 			}
 
-			// Pass reference of the full column data array or static values directly
-			args.append( b.value )
-			log += b.argName + ": " + typeof( b.value ) + ", "
+
+			if (b.Get == null) {
+				throw "REGISTRY [MUT8]: ERROR: Job " + task.jobID +
+					" aborted: Getter for parameter '" +
+					b.argName + "' resolved to null."
+			}
+
+
+			logStr += b.argName + ": " + typeof( b.value ) + ", "
 		}
 
-		printt( "REGISTRY [MUT8]: Executing job " + task.jobID + " | Input Schema: ( " + log + ")" )
-		task.target.acall( args )
+		//	Skip if there's nothing to mutate
+		if (numRows == 0) { continue; }
+		printt( "REGISTRY [MUT8]: Executing job " + task.jobID + " | Input Schema: ( " + logStr + ")" )
+
+		for (int r = 0; r < numRows; r++) {
+			array args = [ getroottable() ]
+
+			bool skipRow = false
+			foreach (ParamBinding b in bindings) {
+				if ( b.Get == null ) {
+					throw "REGISTRY [BAKE]: ERROR: Job " + task.jobID +
+						" row " + r + " aborted: Getter for parameter '" +
+						b.argName + "' resolved to null."
+				}
+
+				if (typeof(val)=="string" && val == "PIPELINE_SKIP") { skipRow = true; break; }
+				args.append( b.Get(r) )
+			}
+
+			if (skipRow) { continue; }
+			var result = task.target.acall(args)
+
+			if (result == null || typeof(result) != "table") { throw "REGISTRY [MUT8]: Job " +
+				task.jobID + " row " + r + " returned '" + typeof(result) + "', expected table"
+			}
+
+			table resTable = expect table( result )
+			foreach (ParamBinding b in bindings) {
+				if ( b.dataSource == eParamSource.DATATABLE && (b.argName in resTable) ) {
+					(expect array(b.value))[r] = resTable[b.argName]
+				}
+			}
+		}
 	}
 
 	//		Clear queues
@@ -672,48 +673,27 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 		array<ParamBinding> bindings = registry.funcBindings[task.jobID]
 		string log = ""
 
-		//		Define ParamBinding.Get(n) functions
-		foreach (ParamBinding b in bindings) {
-			log += b.argName + ", "
-			switch (b.dataSource) {
-				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
-				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
-				case eParamSource.DATATABLE:
-					if (b.value == null) {
-						printt("REGISTRY [BAKE]: Processing job " + task.jobID + " encountered error | Log: [" + log + "]")
-						throw "REGISTRY [BAKE]: Crashed on job " +
-							task.jobID + ", parameter '" + b.colName + "' has null value"
-					}
-
-					array arr = expect array(b.value)
-					if (b.argName == "itemType") {
-						b.Get = var function( int r ) : (arr) {
-							string typeStr = expect string( arr[r] )
-                            return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : -1
-						}; break;
-					}
-
-					b.Get = var function( int r ) : (arr) { return arr[r] }; break;
-			}
-		}
-		printt("REGISTRY [BAKE]: Processing job " + task.jobID + " | Log: [" + log + "]")
-
 		//		Iterate over table
 		for (int r = 0; r < rpak.numRows; r++) {
 			//	Squirrel '.acall()' always requires the root environment at Index 0
 			array args = [ getroottable() ]
 
 			//	Iterate over bindings
+			bool skipRow = false
 			foreach ( ParamBinding b in bindings ) {
-				if ( b.Get == null ) { throw "REGISTRY [BAKE]: ERROR: Call abort on job " +
-					task.jobID + ", Row " + r + ". Assigned getter for parameter '" +
-					b.argName + "' resolved to null."
+				if ( b.Get == null ) {
+					throw "REGISTRY [BAKE]: ERROR: Job " + task.jobID +
+						" row " + r + " aborted: Getter for parameter '" +
+						b.argName + "' resolved to null."
 				}
 
-				args.append(b.Get(r))
+				var val = b.Get(r)
+				if (typeof(val)=="string" && val == "PIPELINE_SKIP") { skipRow = true; break; }
+				args.append(val)
 			}
 
 			// Fire the deferred function
+			if (skipRow) { continue; }
 			task.target.acall( args )
 		}
 	}
@@ -724,15 +704,18 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 
 void function Registry_ExecutePipeline() {
     //	Phase 1: Reflect on functions, handle defaults, map overrides
+	registry.queueBindings_Factory.sort( PrioritySortComparator )
     Registry_ProcessBindings()
 
     //	Phase 2: Deduplicate columns across all jobs, query RPak files, populate RAM cache
     Registry_ProcessCache()
 
     //	Phase 3: Optional mid-pipeline modifications by other sub-mods
+	registry.queueMutate_Modify.sort( PrioritySortComparator )
     Registry_ProcessMutate()
 
     //	Phase 4: Construct argument lists and unbox data natively into the factory methods
+	registry.queueBake_ItemData.sort( PrioritySortComparator )
     Registry_ProcessBake( registry.queueBake_ItemData )
 }
 

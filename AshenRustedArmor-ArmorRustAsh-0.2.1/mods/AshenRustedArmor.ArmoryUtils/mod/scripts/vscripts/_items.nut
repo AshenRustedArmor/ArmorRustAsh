@@ -838,6 +838,7 @@ void function Registry_ProcessBindings() {
 						b.colName = expect string(arr[1])
 						break;
 					case "string":
+						//b.dataSource = eParamSource.DATATABLE
 						b.colName = expect string(newVal)
 						break;
 					default:
@@ -873,7 +874,6 @@ void function Registry_ProcessBindings() {
 				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
 				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
 				case eParamSource.DATATABLE:
-					array arr = expect array(b.value)
 					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task, logStr) {
 						if (b.value == null) {
 							printt("REGISTRY [BIND]: Processing job " + task.jobID + " encountered error | Log: [" + logStr + "]")
@@ -1044,7 +1044,20 @@ void function Registry_ProcessMutate() {
 
 		for (int r = 0; r < numRows; r++) {
 			array args = [ getroottable() ]
-			foreach (ParamBinding b in bindings) { args.append( b.Get(r) ); }
+
+			bool skipRow = false
+			foreach (ParamBinding b in bindings) {
+				if ( b.Get == null ) {
+					throw "REGISTRY [BAKE]: ERROR: Job " + task.jobID +
+						" row " + r + " aborted: Getter for parameter '" +
+						b.argName + "' resolved to null."
+				}
+
+				if (typeof(b.value)=="string" && b.value == "PIPELINE_SKIP") { skipRow = true; break; }
+				args.append( b.Get(r) )
+			}
+
+			if (skipRow) { continue; }
 			var result = task.target.acall(args)
 
 			if (result == null || typeof(result) != "table") { throw "REGISTRY [MUT8]: Job " +
@@ -1079,40 +1092,13 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 		array<ParamBinding> bindings = registry.funcBindings[task.jobID]
 		string log = ""
 
-		//		Define ParamBinding.Get(n) functions
-		foreach (ParamBinding b in bindings) {
-			log += b.argName + ", "
-			switch (b.dataSource) {
-				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
-				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
-				case eParamSource.DATATABLE:
-					if (b.value == null) {
-						printt("REGISTRY [BAKE]: Processing job " + task.jobID + " encountered error | Log: [" + log + "]")
-						throw "REGISTRY [BAKE]: Crashed on job " +
-							task.jobID + ", parameter '" +
-							b.colName + "' has null value"
-					}
-
-					array arr = expect array(b.value)
-					if (b.argName == "itemType") {
-						b.Get = var function( int r ) : (arr) {
-							string typeStr = expect string( arr[r] )
-                            return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
-						}; break;
-					}
-
-					b.Get = var function( int r ) : (arr) { return arr[r] }; break;
-			}
-		}
-		printt("REGISTRY [BAKE]: Processing job " + task.jobID + " | Log: [" + log + "]")
-
 		//		Iterate over table
 		for (int r = 0; r < rpak.numRows; r++) {
 			//	Squirrel '.acall()' always requires the root environment at Index 0
 			array args = [ getroottable() ]
 
 			//	Iterate over bindings
-			bool skipRow = false;
+			bool skipRow = false
 			foreach ( ParamBinding b in bindings ) {
 				if ( b.Get == null ) {
 					throw "REGISTRY [BAKE]: ERROR: Job " + task.jobID +
@@ -1137,15 +1123,18 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 
 void function Registry_ExecutePipeline() {
     //	Phase 1: Reflect on functions, handle defaults, map overrides
+	registry.queueBindings_Factory.sort( PrioritySortComparator )
     Registry_ProcessBindings()
 
     //	Phase 2: Deduplicate columns across all jobs, query RPak files, populate RAM cache
     Registry_ProcessCache()
 
     //	Phase 3: Optional mid-pipeline modifications by other sub-mods
+	registry.queueMutate_Modify.sort( PrioritySortComparator )
     Registry_ProcessMutate()
 
     //	Phase 4: Construct argument lists and unbox data natively into the factory methods
+	registry.queueBake_ItemData.sort( PrioritySortComparator )
     Registry_ProcessBake( registry.queueBake_ItemData )
 }
 
