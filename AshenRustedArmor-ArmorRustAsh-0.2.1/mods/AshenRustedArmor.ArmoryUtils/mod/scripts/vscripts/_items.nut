@@ -471,6 +471,13 @@ struct RPakData {
 //	These structs and comments (indicating calls)
 // 	are organized in consecutive call order.
 
+// struct PriorityTask {
+// 	int jobID
+// 	int priority = 0
+
+// 	var data
+// }
+
 //	Callback: OnRegistryInit
 //	Task: Infers required parameters from passed arguments
 struct TaskBindings_Factory {
@@ -586,6 +593,25 @@ struct {
 ///								Initialization
 ///	============================================================================
 void function InitInferenceMap() {
+	registry.queueBindings_Factory.clear()
+	registry.queueBindings_Mutator.clear()
+	registry.queueBindings_Blueprint.clear()
+
+	registry.queueCache_RPakData.clear()
+
+	registry.queueMutate_Modify.clear()
+	registry.queueMutate_Generate.clear()
+
+	registry.queueBake_ItemData.clear()
+
+
+	registry.jobCounter = 0
+	registry.funcBindings.clear()
+	registry.mut8Bindings.clear()
+	registry.rpakBindings.clear()
+
+	registry.cache.clear()
+
 	//	Structural Indices
 	inferences.datatableindex	<- CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX )
 	inferences.index			<- CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX )
@@ -1122,20 +1148,20 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 }
 
 void function Registry_ExecutePipeline() {
-    //	Phase 1: Reflect on functions, handle defaults, map overrides
-	registry.queueBindings_Factory.sort( PrioritySortComparator )
-    Registry_ProcessBindings()
+	//	Phase 1: Reflect on functions, handle defaults, map overrides
+//	registry.queueBindings_Factory.sort( PrioritySortComparator )
+	Registry_ProcessBindings()
 
-    //	Phase 2: Deduplicate columns across all jobs, query RPak files, populate RAM cache
-    Registry_ProcessCache()
+	//	Phase 2: Deduplicate columns across all jobs, query RPak files, populate RAM cache
+	Registry_ProcessCache()
 
-    //	Phase 3: Optional mid-pipeline modifications by other sub-mods
-	registry.queueMutate_Modify.sort( PrioritySortComparator )
-    Registry_ProcessMutate()
+	//	Phase 3: Optional mid-pipeline modifications by other sub-mods
+//	registry.queueMutate_Modify.sort( PrioritySortComparator )
+	Registry_ProcessMutate()
 
-    //	Phase 4: Construct argument lists and unbox data natively into the factory methods
-	registry.queueBake_ItemData.sort( PrioritySortComparator )
-    Registry_ProcessBake( registry.queueBake_ItemData )
+	//	Phase 4: Construct argument lists and unbox data natively into the factory methods
+//	registry.queueBake_ItemData.sort( PrioritySortComparator )
+	Registry_ProcessBake( registry.queueBake_ItemData )
 }
 
 /// ╔═════════════════════════════════════════════════════════════════════════════════════════╗
@@ -1225,6 +1251,11 @@ void function InitItems()
 	var dataTable
 	int numRows
 
+	// ==========================================================
+	//					Armory Registry Pipeline
+	// ==========================================================
+	InitInferenceMap()
+
 	// //////////////////
 	// CAMO SKINS DATA
 	// //////////////////
@@ -1299,6 +1330,21 @@ void function InitItems()
 	SetupWeaponSkinData()
 
 
+	Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData), {
+		ref="itemRef"})
+
+	// dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
+	// }
 
 	// //////////////////////
 	// PILOT MODS/ATTACHMENTS
@@ -1399,41 +1445,54 @@ void function InitItems()
 		}
 	}
 
-	// ==========================================================
-	//					Armory Registry Pipeline
-	// ==========================================================
-	InitInferenceMap()
-	int jobID = 0
 
-	/// =============== PILOT KIT ===============
-	Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData) )
+	/// //////////////////
+	/// PILOT PASSIVE DATA
+	/// //////////////////
+	Registry_RPakJob( $"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
+		ref="passive" })
 
-	// dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
+	// dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
 	// numRows = GetDatatableRowCount( dataTable )
 	// for ( int i = 0; i < numRows; i++ )
 	// {
-	// 	string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-	// 	bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
-	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 	string itemRef      = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "passive" ) )
+	// 	int itemType        = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	string name			= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image			= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	bool hidden			= GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost			= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// 	CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
+	// 	CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
 	// }
 
 
-	//	Passives
-	Registry_RPakJob( $"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-		ref="passive" })
+	/// //////////////////
+	/// SUIT DATA
+	/// //////////////////
 
 	// Suits
 	Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
 		ref="type", itemType=eItemTypes.PILOT_SUIT })
 
+
+	// dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
+	// 	asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
+	// }
+
 	CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
 
 	//	Executions
+	int jobID = 0
 	var FilterDisabledRef = ArmoryUtils_ClosureBox(table function( string ref, bool hidden ) {
 		return { hidden = hidden || IsDisabledRef(ref) }
 	})
@@ -1446,8 +1505,54 @@ void function InitItems()
 		reqPrime = [ eColType.BOOL ] })
 	Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref", hidden = "hidden"})
 
-	/// =============== OTHER ===============
-	//	MP features + playlist
+
+	// dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	if ( IsDisabledRef( ref ) )
+	// 		continue
+
+	// 	CreatePassiveData( i, eItemTypes.PILOT_EXECUTION, hidden, ref, name, description, description, image, cost )
+	// }
+
+	// ///////////////////
+	// TITAN EXECUTION DATA
+	// ///////////////////
+
+	// dataTable = GetDataTable( $"datatable/titan_executions.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	if ( hidden == true )
+	// 		continue
+
+	// 	string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
+	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 	bool reqPrime = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "reqPrime" ) )
+
+	// 	if ( IsDisabledRef( ref ) )
+	// 		continue
+
+	// 	CreateTitanExecutionData( i, itemType, hidden, ref, name, description, description, image, cost, reqPrime )
+	// }
+	// ///////////////////
+
+	///	========================================
+	///			MP features + playlist
+	///	========================================
 	array<int> featState = [0]
 	var CreateMpFeature = ArmoryUtils_ClosureBox(void function(
 		string featureRef, string featureName, string featureDesc,
@@ -1471,112 +1576,9 @@ void function InitItems()
 	Registry_RPakJob( $"datatable/features_mp.rpak", CreateMpFeature, {featureIcon = [eColType.ASSET]})
 	Registry_RPakJob( $"datatable/playlist_items.rpak", CreatePlaylistItem, {image = [eColType.ASSET]})
 
-	//	Pilot weapons
-	Registry_RPakJob( $"datatable/pilot_weapon_features.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
-		ref = "featureRef", name = "featureName", description = "featureDesc",
-		itemType = eItemTypes.WEAPON_FEATURE, longDescription = "", isHidden = false,
-		image = [ eColType.ASSET, "featureIcon" ]
-	})
-
-	var CreatePilotWeaponMods = ArmoryUtils_ClosureBox(void function( string itemRef, int itemType ) {
-		if ( itemType == eItemTypes.PILOT_PRIMARY ) {
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, itemRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, itemRef, "primarymod3", file.itemData[ "primarymod3" ].cost )
-		} else {
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, itemRef, "secondarymod2", file.itemData[ "secondarymod2" ].cost )
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, itemRef, "secondarymod3", file.itemData[ "secondarymod3" ].cost )
-		}
-	})
-	Registry_RPakJob( $"datatable/pilot_weapons.rpak", CreatePilotWeaponMods )
-
-	var CreateFaction = ArmoryUtils_ClosureBox(void function(
-		int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
-	) {
-		ItemData item = CreateGenericItem( dataTableIndex, eItemTypes.FACTION, persistenceRef, factionName, "", "", logo, cost, false )
-		item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
-		item.persistenceId = dataTableIndex
-	})
-	Registry_RPakJob( $"datatable/faction_leaders.rpak", CreateFaction )
-
-	/// =========== Persona customization ============
-	var PlayerProfileCreate = ArmoryUtils_ClosureBox(void function(
-		int dataTableIndex, int itemType, string ref, string name, asset image, int cost
-	) {
-		CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, false )
-		GetItemData( ref ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
-	})
-
-	var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool isHidden ) {
-		return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, isHidden = (cost < 0), cost = max(cost, 0) }
-	})
-
-	jobID = Registry_RPakJob( $"datatable/calling_cards.rpak", PlayerProfileCreate, {
-		itemType = eItemTypes.CALLING_CARD, ref = "cardRef", image = [eColType.ASSET] })
-	Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = "cardRef"})
-
-	jobID = Registry_RPakJob( $"datatable/callsign_icons.rpak", PlayerProfileCreate, {
-		itemType = eItemTypes.CALLSIGN_ICON, ref = "cardRef", image = [eColType.ASSET] })
-	Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = "iconRef"})
-
-	//		Execute
-	Registry_ExecutePipeline()
-	//*/
-
-	// {
-	// 	var dataTable = GetDataTable( $"datatable/calling_cards.rpak" )
-	// 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
-	// 	{
-	// 		string cardRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_REF_COLUMN_NAME ) )
-	// 		string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_NAME_COLUMN_NAME ) )
-	// 		asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_IMAGE_COLUMN_NAME ) )
-	// 		int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
-	// 		bool isHidden = false
-	// 		if ( cost < 0 )
-	// 		{
-	// 			isHidden = true
-	// 			cost = 0
-	// 		}
-
-	// 		string desc = "Undefined"
-	// 		string longdesc = "Undefined"
-
-	// 		int datatableIndex = row
-
-	// 		CreateGenericItem( datatableIndex, eItemTypes.CALLING_CARD, cardRef, name, desc, longdesc, image, cost, isHidden )
-	// 		GetItemData( cardRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
-	// 	}
-	// }
-
-	// {
-	// 	var dataTable = GetDataTable( $"datatable/callsign_icons.rpak" )
-	// 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
-	// 	{
-	// 		string iconRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_REF_COLUMN_NAME ) )
-	// 		string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_NAME_COLUMN_NAME ) )
-	// 		asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_IMAGE_COLUMN_NAME ) )
-	// 		int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
-	// 		bool isHidden = false
-	// 		if ( cost < 0 )
-	// 		{
-	// 			isHidden = true
-	// 			cost = 0
-	// 		}
-
-	// 		string desc = "Undefined"
-	// 		string longdesc = "Undefined"
-
-	// 		int datatableIndex = row
-
-	// 		if ( IsDisabledRef( iconRef ) )
-	// 			continue
-
-	// 		CreateGenericItem( datatableIndex, eItemTypes.CALLSIGN_ICON, iconRef, name, desc, longdesc, image, cost, isHidden )
-	// 		GetItemData( iconRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
-	// 	}
-	// }
-
-	// dataTable = GetDataTable( $"datatable/pilot_weapon_features.rpak" )
+	// dataTable = GetDataTable( $"datatable/features_mp.rpak" )
 	// numRows = GetDatatableRowCount( dataTable )
+	// int featureIndex = 0
 	// for ( int i = 0; i < numRows; i++ )
 	// {
 	// 	string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
@@ -1584,51 +1586,125 @@ void function InitItems()
 	// 	string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
 	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
 	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-	// 	int dataTableIndex = i
+	// 	string specificType = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "specificType" ) )
+
 	// 	const bool IS_HIDDEN_ARG = false
-	// 	CreateGenericItem( dataTableIndex, eItemTypes.WEAPON_FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+	// 	ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+	// 	featureItem.i.specificType <- specificType
+
+	// 	featureIndex++
 	// }
+
+	// dataTable = GetDataTable( $"datatable/playlist_items.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string playlistRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "playlist" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	const bool IS_HIDDEN_ARG = false
+	// 	ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, playlistRef, name, "", "", image, cost, IS_HIDDEN_ARG )
+	// 	featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
+	// 	featureItem.i.isPlaylist <- true
+
+	// 	featureIndex++
+	// }
+
+	// {
+	// 	int featureIndex = 0
+	// 	int gameModeCount = PersistenceGetEnumCount( "gameModes" )
+	// 	for ( int modeIndex = 0; modeIndex < gameModeCount; modeIndex++ )
+	// 	{
+	// 		string gameModeRef = PersistenceGetEnumItemNameForIndex( "gameModes", modeIndex )
+	// 		if ( !IsRefValid( gameModeRef ) )
+	// 		{
+	// 			string name = GameMode_GetName( gameModeRef )
+	// 			string desc = GameMode_GetDesc( gameModeRef )
+	// 			asset image = GameMode_GetIcon( gameModeRef )
+	// 			int cost = 0
+	//
+	// 			CreateGenericItem( featureIndex, eItemTypes.GAME_MODE, gameModeRef, name, desc, "", image, cost )
+	// 			featureIndex++
+	// 		}
+	// 	}
+	// }
+
+	// Registry_RPakJob( $"datatable/pilot_weapon_features.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
+	// 	ref = "featureRef", name = "featureName", description = "featureDesc",
+	// 	itemType = eItemTypes.WEAPON_FEATURE, longdesc = "", isHidden = false,
+	// 	image = [ eColType.ASSET, "featureIcon" ]
+	// })
 
 	// ///////////////////
 	// PILOT SECONDARY MOD SLOTS
 	// ///////////////////
-	// dataTable = GetDataTable( $"datatable/pilot_weapons.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string weaponRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-	// 	int weaponType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-	// 	if ( weaponType == eItemTypes.PILOT_PRIMARY )
-	// 	{
-	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
-	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod3", file.itemData[ "primarymod3" ].cost )
-	// 	}
-	// 	else
-	// 	{
-	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod2", file.itemData[ "secondarymod2" ].cost )
-	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod3", file.itemData[ "secondarymod3" ].cost )
-	// 	}
-	// }
+	dataTable = GetDataTable( $"datatable/pilot_weapon_features.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
+		string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
+		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+		int dataTableIndex = i
+		const bool IS_HIDDEN_ARG = false
+		CreateGenericItem( dataTableIndex, eItemTypes.WEAPON_FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+	}
+
+	dataTable = GetDataTable( $"datatable/pilot_weapons.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string weaponRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+		int weaponType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+		if ( weaponType == eItemTypes.PILOT_PRIMARY )
+		{
+			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
+			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod3", file.itemData[ "primarymod3" ].cost )
+		}
+		else
+		{
+			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod2", file.itemData[ "secondarymod2" ].cost )
+			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod3", file.itemData[ "secondarymod3" ].cost )
+		}
+	}
 
 	// ///////////////////
 	// FACTION DATA
 	// ///////////////////
-	// dataTable = GetDataTable( $"datatable/faction_leaders.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string factionRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "persistenceRef" ) )
-	// 	asset logo = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "logo" ) )
-	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "factionName" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// var CreateFaction = ArmoryUtils_ClosureBox(void function(
+	// 	int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
+	// ) {
+	// 	ItemData item = CreateBaseItemData( eItemTypes.FACTION, persistenceRef, false )
+	// 	item.name = factionName
 
-	// 	ItemData item = CreateBaseItemData( eItemTypes.FACTION, factionRef, false )
-	// 	item.image = logo
-	// 	item.name = name
-	// 	item.cost = cost
 	// 	item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
-	// 	item.persistenceId = i
-	// }
+	// 	item.image = logo
+	// 	item.cost = cost
+
+	// 	item.persistenceId = dataTableIndex
+	// })
+	// Registry_RPakJob( $"datatable/faction_leaders.rpak", CreateFaction )
+
+	dataTable = GetDataTable( $"datatable/faction_leaders.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string factionRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "persistenceRef" ) )
+		asset logo = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "logo" ) )
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "factionName" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+		ItemData item = CreateBaseItemData( eItemTypes.FACTION, factionRef, false )
+		item.image = logo
+		item.name = name
+		item.cost = cost
+		item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
+		item.persistenceId = i
+	}
 
 	// ///////////////
 	// TITAN MOD DATA
@@ -1878,6 +1954,78 @@ void function InitItems()
 	}
 
 
+	/// =========== Persona customization ============
+	// var PlayerProfileCreate = ArmoryUtils_ClosureBox(void function(
+	// 	int dataTableIndex, int itemType, string ref, string name, asset image, int cost
+	// ) {
+	// 	CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, false )
+	// 	GetItemData( ref ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+	// })
+
+	// var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool isHidden ) {
+	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, isHidden = (cost < 0), cost = max(cost, 0) }
+	// })
+
+	// jobID = Registry_RPakJob( $"datatable/calling_cards.rpak", PlayerProfileCreate, {
+	// 	itemType = eItemTypes.CALLING_CARD, ref = CALLING_CARD_REF_COLUMN_NAME, image = [eColType.ASSET] })
+	// Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = CALLING_CARD_REF_COLUMN_NAME})
+
+	// jobID = Registry_RPakJob( $"datatable/callsign_icons.rpak", PlayerProfileCreate, {
+	// 	itemType = eItemTypes.CALLSIGN_ICON, ref = CALLSIGN_ICON_REF_COLUMN_NAME, image = [eColType.ASSET] })
+	// Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = CALLSIGN_ICON_REF_COLUMN_NAME})
+
+	{
+		var dataTable = GetDataTable( $"datatable/calling_cards.rpak" )
+		for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
+		{
+			string cardRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_REF_COLUMN_NAME ) )
+			string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_NAME_COLUMN_NAME ) )
+			asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_IMAGE_COLUMN_NAME ) )
+			int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
+			bool isHidden = false
+			if ( cost < 0 )
+			{
+				isHidden = true
+				cost = 0
+			}
+
+			string desc = "Undefined"
+			string longdesc = "Undefined"
+
+			int datatableIndex = row
+
+			CreateGenericItem( datatableIndex, eItemTypes.CALLING_CARD, cardRef, name, desc, longdesc, image, cost, isHidden )
+			GetItemData( cardRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+		}
+	}
+
+	{
+		var dataTable = GetDataTable( $"datatable/callsign_icons.rpak" )
+		for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
+		{
+			string iconRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_REF_COLUMN_NAME ) )
+			string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_NAME_COLUMN_NAME ) )
+			asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_IMAGE_COLUMN_NAME ) )
+			int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
+			bool isHidden = false
+			if ( cost < 0 )
+			{
+				isHidden = true
+				cost = 0
+			}
+
+			string desc = "Undefined"
+			string longdesc = "Undefined"
+
+			int datatableIndex = row
+
+			if ( IsDisabledRef( iconRef ) )
+				continue
+
+			CreateGenericItem( datatableIndex, eItemTypes.CALLSIGN_ICON, iconRef, name, desc, longdesc, image, cost, isHidden )
+			GetItemData( iconRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+		}
+	}
 
 	// ///////////////////
 	// NON-LOADOUT WEAPONS
@@ -1938,6 +2086,9 @@ void function InitItems()
 		bool hidden = !GetDataTableBool( dataTable, row, GetDataTableColumnByName( dataTable, "selectable" ) )
 		CreateGenericItem( row, eItemTypes.BURN_METER_REWARD, itemRef, name, description, description, image, cost, hidden )
 	}
+
+	//		Execute
+	Registry_ExecutePipeline()
 
 	InitRandomUnlocks()
 
