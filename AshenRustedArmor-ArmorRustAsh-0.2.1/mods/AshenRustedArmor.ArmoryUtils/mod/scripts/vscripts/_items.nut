@@ -429,16 +429,63 @@ struct
 /// ║   ░░░░░░░░░    ░░░░░░░░    ░░░░░░░░░     ░░░░░       ░░░░░░░    ░░░░░     ░░░░░  ║
 /// ║                                                                                  ║
 /// ╚══════════════════════════════════════════════════════════════════════════════════╝
+/*	Brief regex tangent that I'm proud of
+Match:		const string (LOG|ERR|LOG_WARN)_(BIND|CCH|MUT|BAKE)_([\w|_]*?)(?:\s*)=\s"REGISTRY \[.*\]:\s(?:(?:ERROR|WARNING):\s)?(.*?)"
+Replace:	const string $2_$1_$3\t\t\t= "$4"
 
-///	============================================================================
+Match:		const string (BIND|CCH|MUT|BAKE)_LOG(.*?\s\|\s Log:\[\%s\])
+Replace:	const string $1_INFO
+*/
+
+
+///	===========================================================================
+///							Error Formatting + Text
+///	===========================================================================
+//		Text definitions
+//	General
+const string PHASE_THROW					= "REGISTRY [%s] %s: %s"
+const string PHASE_DUMP						= "Task '%s' encountered error | Log: $s"	//"[%s]"
+
+//	INFER Phase
+const string INFER_WARN_NULL				= "b.value != null"
+const string INFER_INFO_GETTER_SET			= "Setting getters for Task '%s' | Log: $s"	//"[%s]
+
+const string INFER_ERROR_INFERENCE_FAIL		= "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?"
+const string INFER_ERROR_OVERRIDE_INV		= "Task '%s' override '%s' invalid: target lacks this param"
+const string INFER_ERROR_VALUE_NULL			= "Task '%s' crashed, argument '%s' has null value"
+
+//	CACHE Phase
+const string CACHE_MISC_RPAK_INDEX			= "%s#[%s]"
+
+const string CACHE_INFO_CACHED				= "Task '%s' cached RPak %s (%d rows)"
+const string CACHE_ERROR_NO_COLUMN			= "Task '%s' requested %s#\"%s\" which does not exist"
+
+//	PATCH Phase
+const string PATCH_INFO_VALIDATED_BINDS		= "Mutator '%s' bindings validated | Log: $s"	//"[%s]"
+const string PATCH_INFO_NO_DATA				= "Mutator '%s' has no data, skipping"
+
+const string PATCH_INFO_ERROR				= "Task '%s' | Log: $s"	//"[%s]"
+
+const string PATCH_ERROR_BIND_UNRESOLVED	= "Mutator '%s' argument '%s' has unresolved data binding."
+const string PATCH_ERROR_GETTER_NULL		= "Mutator '%s' aborted: Getter for argument '%s' resolved to null."
+const string PATCH_ERROR_BIND_MISSING		= "Mutator '%s' missing data binding for requested mutator param '%s'"
+const string PATCH_ERROR_EXPECTED_TABLE		= "Mutator '%s' row %d returned '%s', expected table"
+
+const string PATCH_ERROR_GEN_EXP_ARRAY		= "Generator '%s' expected array of tables, got %s"
+const string PATCH_ERROR_GEN_ROW_ARRAY		= "Generator '%s' row %d expected array of tables, got %s"
+
+//	BUILD Phase
+const string BUILD_ERROR_GETTER_NULL		= "Factory '%s' row %d aborted: Getter for argument '%s' resolved to null."
+
+///	===========================================================================
 ///							Data Storage + Handling
-///	============================================================================
+///	===========================================================================
 //		Options for data retrieval
-//	Maps to GetDataTable[Type] functions.
+//	Maps to GetDataTable[Type] functions, allowing typed retrieval
 enum eColType { NULL, BOOL, INT, FLOAT, VECTOR, STRING, ASSET }
 
-//	Decides where data comes from.
-enum eParamSource { DATATABLE, ROW_INDEX, STATIC_VAL }
+//	Declares where data comes from, allowing pregeneration of getters
+enum eParamSource { DATATABLE, ROW_INDEX, STATIC_VAL, GENERATED }
 
 //		ParamBinding
 //	Links a column in registry.cache to a function parameter
@@ -458,91 +505,99 @@ struct ParamBinding {
 	var functionref( int ) Get = null			//	Getter assigned in ProcessBake
 }
 
-//	Cached data struct
+//		Cached data
 struct RPakData {
 	int numRows
 	table< string, int > colTypes		//	"cost" -> eColType.INT
 	table< string, array<var> > data	//	"cost" -> [ 1, 2, 3 ]
 }
 
-///	============================================================================
+
+
+
+///	===========================================================================
 ///								Tasks Structs by Phase
-///	============================================================================
-//	These structs and comments (indicating calls)
-// 	are organized in consecutive call order.
+///	===========================================================================
+//		Task Handling
+//	Necessary to extract internal task data, differentiate between target funcs
+enum eTaskType { FACTORY, MUTATOR, GENERATOR, DATATABLE }
 
-// struct PriorityTask {
-// 	int jobID
-// 	int priority = 0
-
-// 	var data
-// }
-
-//	Callback: OnRegistryInit
-//	Task: Infers required parameters from passed arguments
-struct TaskBindings_Factory {
-	int jobID
-	int priority = 0
-
-	asset rpakPath
-	var target
-	table overrides
-}
-
-struct TaskBindings_Mutator {
-	int jobID
-	int priority = 0
+///	=== INFER PHASE ===========================================================
+//		Function binding
+//	Binds an arbitrary function, type of which is defined by eTaskType. This
+//	replaces TaskInfer_Factory, TaskInfer_Mutator, etc.
+struct TaskInfer_Function {
+	string name
+	int taskType
 
 	var target
-	table rpak2args
 }
 
-struct TaskBindings_Blueprint {
-	int jobID
-	asset rpakPath
+//	Intermediate representation for parameter extraction.
+struct TaskInfer_Blueprint {
+	string name
 
+	//	Extracted functionality from the target
 	array<string> rawArgs
 	array<var> rawDefs
 	int defsIdx
 
-	table overrides
-
+	//	Destination array used to build parameters
 	array<ParamBinding> destArray
 }
 
-//	Task: Consumes bindings to cache data
+///	=== CACHE PHASE ===========================================================
+//		Data binding
+//	Creates bindings for RPakData, including column + static overrides
+struct TaskInfer_RPakData {
+	string name
+
+	asset rpakPath
+	table overrides
+}
+
+//	Creates / manages bindings for generated data, very WIP. TODO
+struct TaskInfer_Generated {
+	string name
+
+	array<string> argNames
+	table overrides
+}
+
+
+//	Consumes bindings to cache data from RPaks
 struct TaskCache_RPakData {
-    asset rpakPath
+	int jobID
+
+	asset rpakPath
 }
 
-//	Callback: OnRegistryMutate
-//	Task: Mod-accessible mutations of the cache
-struct TaskMutate_Modify {
-	int jobID
-	int priority = 0
+///	=== PATCH PHASE ===========================================================
+//	Ordered tasks with an internal data struct. Necessary for the Mutate phase
+//	where order-of-execution matters a great deal
+struct TaskOrdered {
+	string name
+	int taskType
 
+	var i
+}
+
+//	Mutate the cache with "table functionref target( ... )"
+struct TaskPatchMutate {
 	var target
 }
 
-struct TaskMutate_Generate {
-	int jobID
-	int priority = 0
-
+//	Generate new data, very WIP. TODO
+struct TaskPatchGenerate {
 	var target
+	// some other stuff too...
 }
 
-//	Callback: OnRegistryBake
-//	Task: Bakes cached data into (Sub)ItemData the game understands
-struct TaskBake_ItemData {
-	int jobID
-	int priority = 0
-
-	asset rpakPath	//	TODO temp fix, Bake shouldn't know about the rpaks
+///	=== BUILD PHASE ===========================================================
+//	Bakes cached data into (Sub)ItemData the game understands
+struct TaskBuild_ItemData {
+	string name
 	var target
-}
-
-int function PrioritySortComparator( a, b ) {
-    return expect int(b.priority - a.priority)
 }
 
 ///	============================================================================
@@ -553,65 +608,82 @@ table< string, ParamBinding > inferences = {}
 
 //	Registry
 struct {
-	// ========== CALLBACKS ==========
-	array< void functionref() > cb_OnRegistryInit
-	array< void functionref() > cb_OnRegistryMutate
+	table logger = {}
 
-	// ========== QUEUES ==========
+	/// === CALLBACKS =========================================================
+//	array< void functionref() > cb_OnRegistryInit
+//	array< void functionref() > cb_OnRegistryMutate
+
+	/// === QUEUES ============================================================
 	//	Bindings Phase
-	array<TaskBindings_Factory>	queueBindings_Factory
-	array<TaskBindings_Mutator>	queueBindings_Mutator
-	array<TaskBindings_Blueprint> queueBindings_Blueprint
+	array<TaskInfer_Function>	queueInfer_Function
+	array<TaskInfer_Blueprint>	queueInfer_Blueprint
 
 	//	Cache Phase
+	array<TaskInfer_RPakData>	queueInfer_RPakData
+	array<TaskInfer_Generated>	queueInfer_Generated
+
 	array<TaskCache_RPakData>	queueCache_RPakData
 
 	//	Mutate Phase
-	array<TaskMutate_Modify>	queueMutate_Modify
-	array<TaskMutate_Generate>	queueMutate_Generate
+	array<TaskOrdered>			queuePatchAllTasks
 
 	//	Bake Phase
-	array<TaskBake_ItemData>	queueBake_ItemData //BakeBaseItems 	//	Order required to ensure correct inheritance
+	array<TaskBuild_ItemData>	queueBuild_ItemData //BakeBaseItems 	//	Order required to ensure correct inheritance
 
-	// ========== STATE ==========
-	//	Generates jobID, used to prevent collisions from multiple calls
-	int jobCounter = 0
+	/// === BINDINGS ==========================================================
+	//	Appends nubmers to name to prevent collisions from multiple calls
+	table< string, int > taskCounter
 
-	//	Maps job ID -> array of dependent bindings
-	table< int, array<ParamBinding> > funcBindings
-	table< int, array<ParamBinding> > mut8Bindings
+	//	Maps task name -> array of dependent bindings
+	table< string, array<ParamBinding> > facBindings
+	table< string, array<ParamBinding> > mutBindings
+	table< string, array<ParamBinding> > genBindings
+
+//	table< string, array<ParamBinding> > jobBindings
 
 	//	Internally assets are just a string
 	//	Maps rpakPath -> array of dependent bindings
 	table< asset, array<ParamBinding> > rpakBindings
 
+	/// === CACHE =============================================================
 	//	Maps rpakPath -> { columnName -> [ row0, row1, ... ] }
 	table< asset, RPakData > cache
+
+
 } registry
 
 ///	============================================================================
 ///								Initialization
 ///	============================================================================
-void function InitInferenceMap() {
-	registry.queueBindings_Factory.clear()
-	registry.queueBindings_Mutator.clear()
-	registry.queueBindings_Blueprint.clear()
+void function RegistryPipelineInit() {
+	//		Reset state
+	registry.logger = {}
+	registry.logger = ArmoryUtil_CreateLogger()
 
+	//	Clear queues
+	registry.queueInfer_Function.clear()
+	registry.queueInfer_Blueprint.clear()
+
+	registry.queueInfer_RPakData.clear()
+	registry.queueInfer_Generated.clear()
 	registry.queueCache_RPakData.clear()
 
-	registry.queueMutate_Modify.clear()
-	registry.queueMutate_Generate.clear()
+	registry.queuePatchAllTasks.clear()
 
-	registry.queueBake_ItemData.clear()
+	registry.queueBuild_ItemData.clear()
 
+	//	Reset bindings
+	registry.taskCounter = {}
 
-	registry.jobCounter = 0
-	registry.funcBindings.clear()
-	registry.mut8Bindings.clear()
-	registry.rpakBindings.clear()
+	registry.facBindings.clear()
+	registry.mutBindings.clear()
+	registry.genBindings.clear()
 
+	//	Clear cache
 	registry.cache.clear()
 
+	//		Init inference map
 	//	Structural Indices
 	inferences.datatableindex	<- CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX )
 	inferences.index			<- CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX )
@@ -671,39 +743,33 @@ ParamBinding function InferParamBinding( string argName ) {
 ///	============================================================================
 ///								Job Builders
 ///	============================================================================
-int function Registry_BlankJob() {
-	//	Generate a unique identity for this specific factory function run
-    int currentJobID = registry.jobCounter
-	registry.jobCounter++
-
-	return currentJobID
-}
-
+/*	//	These are deprecated
 int function Registry_RPakJob( asset rpakPath, var target, table overrides = {} ) {
-    //	Generate a unique identity for this specific factory function run
-    int currentJobID = registry.jobCounter
+	//	Generate a unique identity for this specific factory function run
+	int currentJobID = registry.jobCounter
 	registry.jobCounter++
 
-    //	1. Instantiate and queue the Parameter Inference Phase
-    TaskBindings_Factory inferTask
-    inferTask.jobID		= currentJobID
-    inferTask.rpakPath	= rpakPath
-    inferTask.target	= target
-    inferTask.overrides	= overrides
-    registry.queueBindings_Factory.append( inferTask )
+	//	1. Instantiate and queue the Parameter Inference Phase
+	TaskInfer_RPak inferTask
+	inferTask.jobID		= currentJobID
+	inferTask.rpakPath	= rpakPath
+	inferTask.target	= target
+	inferTask.overrides	= overrides
+	registry.queueInfer_RPak.append( inferTask )
 
-    //	2. Instantiate and queue the Data Extraction/Caching Phase
-    // ProcessCache() cleanly skips already cached or un-bound RPaks, so duplicate paths are harmless
-    TaskCache_RPakData cacheTask
-    cacheTask.rpakPath	= rpakPath
-    registry.queueCache_RPakData.append( cacheTask )
+	//	2. Instantiate and queue the Data Extraction/Caching Phase
+	// ProcessCache() cleanly skips already cached or un-bound RPaks, so duplicate paths are harmless
+	TaskCache_RPakData cacheTask
+	cacheTask.jobID		= currentJobID
+	cacheTask.rpakPath	= rpakPath
+	registry.queueCache_RPakData.append( cacheTask )
 
-    //	3. Instantiate and queue the Execution/Bake Phase
-    TaskBake_ItemData bakeTask
-    bakeTask.jobID		= currentJobID
-    bakeTask.rpakPath	= rpakPath
-    bakeTask.target		= target
-    registry.queueBake_ItemData.append( bakeTask )
+	//	3. Instantiate and queue the Execution/Bake Phase
+	TaskBuild_ItemData bakeTask
+	bakeTask.jobID		= currentJobID
+	bakeTask.rpakPath	= rpakPath
+	bakeTask.target		= target
+	registry.queueBuild_ItemData.append( bakeTask )
 
 	//	Return the ID
 	return currentJobID
@@ -712,89 +778,187 @@ int function Registry_RPakJob( asset rpakPath, var target, table overrides = {} 
 //  Attaches an in-place modifier (filtering/editing) to a job
 void function Registry_ModifyJob( int jobID, int priority, var target, table rpak2args = {} ) {
 	//	1. Instantiate and queue the Parameter Inference Phase
-    TaskBindings_Mutator bindTask
-    bindTask.jobID		= jobID
+	TaskInfer_Mutator bindTask
+	bindTask.jobID		= jobID
 	bindTask.priority	= priority
 
-    bindTask.target		= target
-    bindTask.rpak2args	= rpak2args
+	bindTask.target		= target
+	bindTask.rpak2args	= rpak2args	///	Maps { $"datatable/xyz" = [ "arg1", "arg2", ... ]}
 
-	registry.queueBindings_Mutator.append( bindTask )
+	registry.queueInfer_Mutator.append( bindTask )
 
 	//	2. Instantiate and queue the Mutation Phase
 	// skdlhg;ak.sjdhg lakdfjg
-	TaskMutate_Modify modifyTask
+	TaskPatchModify modifyTask
 	modifyTask.jobID	= jobID
 	modifyTask.priority = priority
 	modifyTask.target	= target
 
-	registry.queueMutate_Modify.append( modifyTask )
+	registry.queuePatchModify.append( modifyTask )
+}	//*/
+
+//	NEW
+TaskInfer_Blueprint function Registry_ReflectFunc( var target ) {
+	TaskInfer_Blueprint bp
+
+	local infos = task.target.getinfos()
+
+	array rawArgs = expect array(infos.parameters)
+	foreach( a in rawArgs ) { bp.rawArgs.append(expect string(a)); }
+	if (bp.rawArgs.len() > 0 && bp.rawArgs[0] == "this") { bp.rawArgs.remove(0) }
+
+	array rawDefs = ("defparams" in infos) ? expect array(infos.defparams) : []
+	foreach( d in rawDefs ) { bp.rawDefs.append(expect string(d)); }
+	bp.defsIdx = bp.rawArgs.len() - bp.rawDefs.len()
+
+	return bp
 }
+
+void function Registry_BindFunction(
+	var target, int taskType, string taskName,
+	array<string> before = [], array<string> after = []
+) {
+	//		Allow developers to enter a sequence of tasks w/o duplicated args
+	//	Check to registry to see if this is a repeat name
+	int taskNum = 0
+	if (taskName in registry.taskCounter) {
+		taskNum = registry.taskCounter[taskName]
+	} else { registry.taskCounter[taskName] <- taskNum }
+	registry.taskCounter ++
+
+	//	Add
+	string adjName = taskName
+
+
+}
+
+
+
+int function Registry_BindFactory( var target ) {
+	int jobID = registry.jobCounter
+	registry.jobCounter++
+
+	TaskInfer_Blueprint bp = Registry_ReflectFunc( target )
+
+	//		Initialize bindings from target
+	array<ParamBinding> fromFunc = []
+	foreach (int i, string argName in task.rawArgs) {
+		ParamBinding b = InferParamBinding(argName)
+
+		//	Handle optional parameters: assign STATIC_VAL and fetch default
+		if (i >= task.defsIdx) {
+			b.dataSource = eParamSource.STATIC_VAL
+			b.value = task.rawDefs[ i - task.defsIdx ]
+		}
+
+		//	Append to list
+		fromFunc.append(b)
+	}
+
+	//		Track bindings in registry
+	//	This would have been done inside a conditional, since it's assumed that
+	//	the job is created here we don't need the conditional block.
+	registry.funcBindings[task.jobID] <- []
+	bp.destArray = registry.funcBindings[task.jobID]
+
+	//		Return
+	return jobID
+}
+
+//		TODO I don't see a need for this yet but it will come up later
+// void function Registry_BindStatic( int jobID, table overrides ) {
+// }
+
+// void function Registry_BindRPak( int jobID, asset rpakPath, table rpak2args ) {
+// }
 
 ///	============================================================================
 ///								Task Processing
 ///	============================================================================
-void function Registry_ProcessBindings() {
+void function Registry_InferPhase() {
 	table<int, asset> job2rpak = {}
 
 	//		Inferred bindings
-	foreach (TaskBindings_Factory task in registry.queueBindings_Factory) {
+	foreach (TaskInfer_RPak task in registry.queueInfer_RPak) {
 		//		Sanity Checks
+		//	Make sure the job has been initialized
+		if (!(task.jobID in registry.funcBindings)) { continue; }
+
 		//	Preemptive null check for safety
-		if (task.target == null) {
-			printt("REGISTRY [BIND]: WARNING: task.target == null")
-			continue
+		// if (task.target == null) {
+		// 	printt("REGISTRY [BIND]: WARNING: task.target == null")
+		// 	continue
+		// }
+
+		//	Find binding arrays
+		array<ParamBinding> fromFunc = registry.funcBindings[task.jobID]
+		array<ParamBinding> fromTable = []
+		foreach (ParamBinding b in fromFunc) {
+			//		Sanity Checks
+			//	Check b.value to eliminate already-set data
+			if (b.value != null) {
+				printt("REGISTRY [BIND]: WARNING: b.value != null")
+				continue
+			}
+
+			//	Handle overrides: column, type, and data override
+			if (b.argName in task.overrides) {
+				var newVal = task.overrides[argName]
+				switch (typeof(newVal)) {
+					case "array":
+						array arr = expect array(newVal)
+						b.colName = b.argName
+
+						//	Column type override
+						b.dataType = expect int(arr[0])
+
+						if (arr.len() > 1) { b.colName = expect string(arr[1]); }
+						if (arr.len() > 2) { b.dataSource = expect int(arr[2]); }
+
+						break;
+
+					case "string":
+						//b.dataSource = eParamSource.DATATABLE
+						b.colName = expect string(newVal)
+						break;
+
+					default:
+						b.dataSource = eParamSource.STATIC_VAL
+						b.value = newVal
+						break;
+				}
+			}
+
+			//	Append: all bindings depend on func, some depend on the rpak
+			if (b.dataSource == eParamSource.DATATABLE) {
+				if (b.colName == "") {
+					throw "REGISTRY [BIND]: ERROR: Job " +
+						task.jobID + " param '" + argName +
+						"' cannot be inferred from '" + task.rpakPath +
+						"'. Missing override?"
+				}
+
+				fromTable.append(b)
+			}
+
+			fromFunc.append(b)
 		}
 
-		/// =========== Functionality ===========
-		TaskBindings_Blueprint bp
-		bp.jobID	= task.jobID
-		bp.rpakPath	= task.rpakPath
-
-		job2rpak[task.jobID] <- task.rpakPath
-
-		//	Get function information - name, arguments, defaults
-		local infos = task.target.getinfos()
-
-		array rawArgs = expect array(infos.parameters)
-		foreach( a in rawArgs ) { bp.rawArgs.append(expect string(a)); }
-		if (bp.rawArgs.len() > 0 && bp.rawArgs[0] == "this") { bp.rawArgs.remove(0) }
-
-		array rawDefs = ("defparams" in infos) ? expect array(infos.defparams) : []
-		foreach( d in rawDefs ) { bp.rawDefs.append(expect string(d)); }
-		bp.defsIdx = bp.rawArgs.len() - bp.rawDefs.len()
-
-		//	Overrides / etc
-		bp.overrides = task.overrides
-
-		//	Initialize global env and give the bp a reference
-		if(!(task.jobID in registry.funcBindings)) {
-			registry.funcBindings[task.jobID] <- []
-		}
-		bp.destArray = registry.funcBindings[task.jobID]
-		registry.queueBindings_Blueprint.append(bp)
+		//	Add to registry
+		if( task.rpakPath in registry.rpakBindings ) {
+			registry.rpakBindings[task.rpakPath].extend(fromTable)
+		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
 	}
 
-	//		Mutator bindings
-	foreach (TaskBindings_Mutator task in registry.queueBindings_Mutator) {
+	/*		Mutator bindings
+	foreach (TaskInfer_Mutator task in registry.queueInfer_Mutator) {
 		/// =========== Functionality ===========
-		TaskBindings_Blueprint bp
+		TaskInfer_Blueprint bp = Registry_ReflectFunc( target )
 		bp.jobID = task.jobID
 
 		if (task.jobID in job2rpak) {
 			bp.rpakPath = job2rpak[task.jobID]
 		}
-
-		//	Get function information - name, arguments, defaults
-		local infos = task.target.getinfos()
-
-		array rawArgs = expect array(infos.parameters)
-		foreach( a in rawArgs ) { bp.rawArgs.append(expect string(a)); }
-		if (bp.rawArgs.len() > 0 && bp.rawArgs[0] == "this") { bp.rawArgs.remove(0) }
-
-		array rawDefs = ("defparams" in infos) ? expect array(infos.defparams) : []
-		foreach( d in rawDefs ) { bp.rawDefs.append(expect string(d)); }
-		bp.defsIdx = bp.rawArgs.len() - bp.rawDefs.len()
 
 		//	2). Iterate over the args
 		bp.overrides = {}
@@ -819,11 +983,11 @@ void function Registry_ProcessBindings() {
 			registry.mut8Bindings[task.jobID] <- []
 		}
 		bp.destArray = registry.mut8Bindings[task.jobID]
-		registry.queueBindings_Blueprint.append(bp)
-	}
+		registry.queueInfer_Blueprint.append(bp)
+	}	//*/
 
-	//		Blueprints
-	foreach (TaskBindings_Blueprint task in registry.queueBindings_Blueprint) {
+	//*		Blueprints
+	foreach (TaskInfer_Blueprint task in registry.queueInfer_Blueprint) {
 		foreach (string key, var val in task.overrides) {
 			bool isValid = false
 			foreach( string argName in task.rawArgs) {
@@ -849,30 +1013,30 @@ void function Registry_ProcessBindings() {
 			}
 
 			//	Handle overrides: column, type, and data override
-			if (argName in task.overrides) {
-				var newVal = task.overrides[argName]
-				switch (typeof(newVal)) {
-					case "array":
-						array arr = expect array(newVal)
-						b.colName = argName
+			// if (argName in task.overrides) {
+			// 	var newVal = task.overrides[argName]
+			// 	switch (typeof(newVal)) {
+			// 		case "array":
+			// 			array arr = expect array(newVal)
+			// 			b.colName = argName
 
-						//	Column type override
-						b.dataType = expect int(arr[0])
+			// 			//	Column type override
+			// 			b.dataType = expect int(arr[0])
 
-						//	Column name override
-						if (arr.len()< 2) { break; }
-						b.colName = expect string(arr[1])
-						break;
-					case "string":
-						//b.dataSource = eParamSource.DATATABLE
-						b.colName = expect string(newVal)
-						break;
-					default:
-						b.dataSource = eParamSource.STATIC_VAL
-						b.value = newVal
-						break;
-				}
-			}
+			// 			if (arr.len() > 1) { b.colName = expect string(arr[1]); }
+			// 			if (arr.len() > 2) { b.dataSource = expect int(arr[2]); }
+
+			// 			break;
+			// 		case "string":
+			// 			//b.dataSource = eParamSource.DATATABLE
+			// 			b.colName = expect string(newVal)
+			// 			break;
+			// 		default:
+			// 			b.dataSource = eParamSource.STATIC_VAL
+			// 			b.value = newVal
+			// 			break;
+			// 	}
+			// }
 
 			//	Append: all bindings depend on func, some depend on the rpak
 			if (b.dataSource == eParamSource.DATATABLE) {
@@ -899,6 +1063,8 @@ void function Registry_ProcessBindings() {
 			switch (b.dataSource) {
 				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
 				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
+
+				case eParamSource.GENERATED:
 				case eParamSource.DATATABLE:
 					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task, logStr) {
 						if (b.value == null) {
@@ -931,14 +1097,14 @@ void function Registry_ProcessBindings() {
 		if( task.rpakPath in registry.rpakBindings ) {
 			registry.rpakBindings[task.rpakPath].extend(fromTable)
 		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
-	}
+	} //*/
 
 	//		Clear queues
-	registry.queueBindings_Mutator.clear()
-	registry.queueBindings_Factory.clear()
+	registry.queueInfer_Mutator.clear()
+	registry.queueInfer_RPak.clear()
 }
 
-void function Registry_ProcessCache() {
+void function Registry_CachePhase() {
 	//		RPakData caching
 	foreach (TaskCache_RPakData task in registry.queueCache_RPakData) {
 		//		Sanity checks
@@ -978,7 +1144,7 @@ void function Registry_ProcessCache() {
 			//	Fetch numeric index for column, throw error if not found
 			int colIdx = GetDataTableColumnByName( dt, b.colName )
 			if (colIdx == -1) {
-				throw "REGISTRY [CCH0]: ERROR: " + task.rpakPath + "#\"" + b.colName + "\" does not exist"
+				throw "REGISTRY [CCH0]: ERROR: Job " + task.jobID + " requested " + task.rpakPath + "#\"" + b.colName + "\" which does not exist"
 			}
 
 			//	Index into colsToFetch
@@ -1027,85 +1193,214 @@ void function Registry_ProcessCache() {
 
 		//		Save to central state
 		registry.cache[task.rpakPath] <- rpak
-		printt("REGISTRY [CCH1]: Cached asset grid for RPak: " + task.rpakPath + "\" (" + numRows + " rows)")
+		printt("REGISTRY [CCH1]: Job " + task.jobID + " cached RPak " + task.rpakPath + " (" + numRows + " rows)")
 	}
 
 	//		Clear queues
 	registry.queueCache_RPakData.clear()
 }
 
-void function Registry_ProcessMutate() {
-	foreach ( TaskMutate_Modify task in registry.queueMutate_Modify ) {
-		if (!(task.jobID in registry.mut8Bindings)) { continue; }
-
-		array<ParamBinding> bindings = registry.mut8Bindings[ task.jobID ]
-
+void function Registry_PatchPhase() {
+	//	Verify mutator bindings independently, seperate from mutate processing.
+	//	Individual mutations won't use all bindings assigned to a single job.
+	foreach ( int jobID, array<ParamBinding> bindings in registry.mut8Bindings) {
 		int numRows = 0
-		string logStr = ""
-		foreach ( ParamBinding b in bindings ) {
-			//	Validate value state before calling with parameters
-			if (b.dataSource == eParamSource.DATATABLE) {
-				if (b.value == null) {
-					printt("REGISTRY [MUT8]: Error on job " + task.jobID + " | Log: [" + logStr + "]")
-					throw "REGISTRY [MUT8]: Job " + task.jobID + " param '" + b.argName + "' has unresolved data binding."
-				}
+		foreach (ParamBinding b in bindings) {
+			if (b.dataSource == eParamSource.DATATABLE && b.value != null) {
+				numRows = (expect array(b.value)).len()
+				break
+			}
+		}
 
-				if (numRows == 0) { numRows = (expect array( b.value )).len(); }
+		string logStr = ""
+		foreach (ParamBinding b in bindings) {
+			if (b.dataSource == eParamSource.GENERATED && b.value == null && numRows > 0) {
+				b.value = []
+				b.value.resize(numRows, null)
 			}
 
+			//	Validate value state before calling with parameters
+			if (b.dataSource == eParamSource.DATATABLE && b.value == null) {
+				printt("REGISTRY [MUT8]: ERROR: Job " + jobID + " | Log: [" + logStr + "]")
+				throw "REGISTRY [MUT8]: ERROR: Job " + jobID + " param '" + b.argName + "' has unresolved data binding."
+			}
 
 			if (b.Get == null) {
-				throw "REGISTRY [MUT8]: ERROR: Job " + task.jobID +
+				throw "REGISTRY [MUT8]: ERROR: Job " + jobID +
 					" aborted: Getter for parameter '" +
 					b.argName + "' resolved to null."
 			}
 
+			logStr += b.argName + ", "
+		}
+		printt( "REGISTRY [MUT8]: Validated job " + jobID + " mutator bindings: (" + logStr + ")" )
+	}
 
+	foreach ( TaskPatchModify task in registry.queuePatchModify ) {
+		if (!(task.jobID in registry.mut8Bindings)) { continue; }
+
+		//	Get function information - name, arguments, defaults
+		local infos = task.target.getinfos()
+
+		array params = expect array(infos.parameters); array rawArgs = []
+		foreach( a in params ) { rawArgs.append(expect string(a)); }
+		if (rawArgs.len() > 0 && rawArgs[0] == "this") { rawArgs.remove(0) }
+
+		//	ijhg;sdlfkgj;d
+		array<ParamBinding> jobBindings = registry.mut8Bindings[ task.jobID ]
+
+		table<string, ParamBinding> mapBindings = {}
+		foreach (ParamBinding b in jobBindings) { mapBindings[b.argName] <- b }
+
+		array<ParamBinding> mutBindings = []
+		foreach (string argName in rawArgs) {
+			if (!(argName in mapBindings)) { throw "REGISTRY [MUT8]: ERROR: Job " + task.jobID +
+				" missing data binding for requested mutator param '" + argName + "'"
+			}
+			mutBindings.append(mapBindings[argName])
+		}
+
+		//		Handle jobs w/o data, log the current mutator
+		int numRows = 0
+		string logStr = ""
+		foreach (ParamBinding b in mutBindings) {
+			if (b.value == null) { logStr += b.argName + ": null, "; continue; }
+			numRows = (numRows == 0) ? (expect array( b.value )).len() : numRows
 			logStr += b.argName + ": " + typeof( b.value ) + ", "
 		}
 
-		//	Skip if there's nothing to mutate
-		if (numRows == 0) { continue; }
-		printt( "REGISTRY [MUT8]: Executing job " + task.jobID + " | Input Schema: ( " + logStr + ")" )
+		//	If a job has no rows (no data), log it and skip
+		if (numRows == 0) {
+			printt( "REGISTRY [MUT8]: Job " + task.jobID + " mutator has no data, skipping" )
+			continue
+		} else {
+			printt( "REGISTRY [MUT8]: Executing job " + task.jobID + " | Mutating: (" + logStr + ")" )
+		}	//*/
 
+		//	TODO: This doesn't work because not every mutator uses every binding
+		//	Convert to an inference from the mutator function args
 		for (int r = 0; r < numRows; r++) {
 			array args = [ getroottable() ]
 
+			//	Get value, skip if indicated
 			bool skipRow = false
-			foreach (ParamBinding b in bindings) {
-				if ( b.Get == null ) {
-					throw "REGISTRY [BAKE]: ERROR: Job " + task.jobID +
-						" row " + r + " aborted: Getter for parameter '" +
-						b.argName + "' resolved to null."
-				}
-
+			foreach (ParamBinding b in mutBindings) {
+				var val = b.Get(r)
 				if (typeof(b.value)=="string" && b.value == "PIPELINE_SKIP") { skipRow = true; break; }
-				args.append( b.Get(r) )
+				args.append( val )
 			}
 
 			if (skipRow) { continue; }
-			var result = task.target.acall(args)
 
+			//	Call mutator to get updated data
+			var result = task.target.acall(args)
 			if (result == null || typeof(result) != "table") { throw "REGISTRY [MUT8]: Job " +
 				task.jobID + " row " + r + " returned '" + typeof(result) + "', expected table"
 			}
 
+			//	Modify array contents
 			table resTable = expect table( result )
-			foreach (ParamBinding b in bindings) {
-				if ( b.dataSource == eParamSource.DATATABLE && (b.argName in resTable) ) {
+			foreach (ParamBinding b in mutBindings) {
+				if ( b.dataSource == eParamSource.DATATABLE || b.dataSource == eParamSource.GENERATED && (b.argName in resTable) ) {
 					(expect array(b.value))[r] = resTable[b.argName]
 				}
 			}
 		}
 	}
 
+	foreach (TaskPatchGenerate task in registry.queuePatchGenerate) {
+		if (!(task.jobID in registry.mut8Bindings)) { continue; }
+
+		//	Get function information - name, arguments, defaults
+		local infos = task.target.getinfos()
+
+		array params = expect array(infos.parameters); array rawArgs = []
+		foreach( a in params ) { rawArgs.append(expect string(a)); }
+		if (rawArgs.len() > 0 && rawArgs[0] == "this") { rawArgs.remove(0) }
+
+		//	ijhg;sdlfkgj;d
+		array<ParamBinding> jobBindings = registry.mut8Bindings[ task.jobID ]
+
+		table<string, ParamBinding> mapBindings = {}
+		foreach (ParamBinding b in jobBindings) { mapBindings[b.argName] <- b }
+
+		array<ParamBinding> genBindings = []
+		foreach (string argName in rawArgs) {
+			if (!(argName in mapBindings)) { throw "REGISTRY [MUT8]: ERROR: Job " + task.jobID +
+				" missing data binding for requested mutator param '" + argName + "'"
+			}
+			genBindings.append(mapBindings[argName])
+		}
+
+		int numRows = 0
+		foreach (ParamBinding b in jobBindings) {
+			if (b.dataSource == eParamSource.DATATABLE && b.value != null) {
+				numRows = (expect array(b.value)).len()
+				break
+			}
+		}
+
+		//	TODO check this code works
+		table<string, array> newOutputs = {}
+		foreach (ParamBinding b in jobBindings) {
+			newOutputs[b.argName] <- []
+		}
+
+		if (numRows == 0) {
+			// Scenario A: Data generation from a blank slate
+			array args = [ getroottable() ]
+			var result = task.target.acall(args)
+			if (result == null || typeof(result) != "array") {
+				throw "REGISTRY [MUT8]: Generator job " + task.jobID + " expected array of tables, got " + typeof(result)
+			}
+
+			foreach (var rowData in expect array(result)) {
+				table resTable = expect table(rowData)
+				foreach (ParamBinding b in jobBindings) {
+					var val = (b.argName in resTable) ? resTable[b.argName] : null
+					newOutputs[b.argName].append(val)
+				}
+			}
+		} else {
+			// Scenario B: Relational cross-join / array multiplication (1-to-N)
+			for (int r = 0; r < numRows; r++) {
+				array args = [ getroottable() ]
+				bool skipRow = false
+
+				foreach (ParamBinding b in genBindings) {
+					var val = b.Get(r)
+					if (typeof(b.value) == "string" && b.value == "PIPELINE_SKIP") { skipRow = true; break; }
+					args.append(val)
+				}
+				if (skipRow) { continue; }
+
+				var result = task.target.acall(args)
+				if (result == null || typeof(result) != "array") {
+					throw "REGISTRY [MUT8]: Generator Job " + task.jobID + " row " + r + " expected array of tables, got " + typeof(result)
+				}
+
+				foreach (var rowData in expect array(result)) {
+					table resTable = expect table(rowData)
+					foreach (ParamBinding b in jobBindings) {
+						var val = (b.argName in resTable) ? resTable[b.argName] : b.Get(r)
+						newOutputs[b.argName].append(val)
+					}
+				}
+			}
+		}
+
+		// Update vector storage layouts
+		foreach (ParamBinding b in jobBindings) { b.value = newOutputs[b.argName] }
+	}
+
 	//		Clear queues
-	registry.queueMutate_Modify.clear()
+	registry.queuePatchModify.clear()
+	registry.queuePatchGenerate.clear()
 }
 
-void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
+void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 	//		ItemData baking
-	foreach (TaskBake_ItemData task in queue) {
+	foreach (TaskBuild_ItemData task in queue) {
 		//		Sanity checks
 		//	Unbound data
 		if ( !(task.jobID in registry.funcBindings) ) { continue }
@@ -1144,24 +1439,24 @@ void function Registry_ProcessBake( array<TaskBake_ItemData> queue ) {
 	}
 
 	//		Clear queues
-	registry.queueBake_ItemData.clear()
+	registry.queueBuild_ItemData.clear()
 }
 
 void function Registry_ExecutePipeline() {
 	//	Phase 1: Reflect on functions, handle defaults, map overrides
-//	registry.queueBindings_Factory.sort( PrioritySortComparator )
-	Registry_ProcessBindings()
+//	registry.queueInfer_RPak.sort( PrioritySortComparator )
+	Registry_InferPhase()
 
 	//	Phase 2: Deduplicate columns across all jobs, query RPak files, populate RAM cache
-	Registry_ProcessCache()
+	Registry_CachePhase()
 
 	//	Phase 3: Optional mid-pipeline modifications by other sub-mods
-//	registry.queueMutate_Modify.sort( PrioritySortComparator )
-	Registry_ProcessMutate()
+//	registry.queuePatchModify.sort( PrioritySortComparator )
+	Registry_PatchPhase()
 
 	//	Phase 4: Construct argument lists and unbox data natively into the factory methods
-//	registry.queueBake_ItemData.sort( PrioritySortComparator )
-	Registry_ProcessBake( registry.queueBake_ItemData )
+//	registry.queueBuild_ItemData.sort( PrioritySortComparator )
+	Registry_BuildPhase( registry.queueBuild_ItemData )
 }
 
 /// ╔═════════════════════════════════════════════════════════════════════════════════════════╗
@@ -1254,7 +1549,7 @@ void function InitItems()
 	// ==========================================================
 	//					Armory Registry Pipeline
 	// ==========================================================
-	InitInferenceMap()
+	RegistryPipelineInit()
 
 	// //////////////////
 	// CAMO SKINS DATA
@@ -1673,7 +1968,7 @@ void function InitItems()
 	}
 
 	// ///////////////////
-	// FACTION DATA
+	// FACTION DATA # NOT THIS
 	// ///////////////////
 	var CreateFaction = ArmoryUtils_ClosureBox(void function(
 		int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
@@ -1750,55 +2045,129 @@ void function InitItems()
 		// description, image, damageDisplay, accuracyDisplay, rangeDisplay, fireRateDisplay, clipSizeDisplay )
 	}
 
-	// ///////////////////
-	// TITAN PASSIVE DATA
-	// ///////////////////
+	/// ====================================================
+	/// 				TITAN PASSIVE DATA
+	/// ====================================================
+	//	Causes error '[SERVER] Persistent data not available.'
 
-	Registry_RPakJob( $"datatable/titan_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-		ref = "passive",
-		itemType = "type",
-		// desc = TITAN_PASSIVE_DESCRIPTION_COLUMN,
-		// longdesc = TITAN_PASSIVE_LONGDESCRIPTION_COLUMN
-		image = [ eColType.ASSET ],
-		hidden = false
-	})
+	// Registry_RPakJob( $"datatable/titan_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
+	// 	ref = TITAN_PASSIVE_COLUMN,
+	// 	itemType = TITAN_PASSIVE_TYPE_COLUMN,
+	//	name = TITAN_PASSIVE_NAME_COLUMN
+	// 	desc = TITAN_PASSIVE_DESCRIPTION_COLUMN,
+	// 	longdesc = TITAN_PASSIVE_LONGDESCRIPTION_COLUMN
+	//	image = TITAN_PASSIVE_IMAGE_COLUMN
+	// 	hidden = TITAN_PASSIVE_HIDDEN_COLUMN
+	// })
 
-	// dataTable = GetDataTable( $"datatable/titan_passives.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef = GetDataTableString( dataTable, i, TITAN_PASSIVE_COLUMN )
-	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, TITAN_PASSIVE_TYPE_COLUMN ) ]
-	// 	string name = GetDataTableString( dataTable, i, TITAN_PASSIVE_NAME_COLUMN )
-	// 	string description = GetDataTableString( dataTable, i, TITAN_PASSIVE_DESCRIPTION_COLUMN )
-	// 	string longDescription = GetDataTableString( dataTable, i, TITAN_PASSIVE_LONGDESCRIPTION_COLUMN )
-	// 	asset image = GetDataTableAsset( dataTable, i, TITAN_PASSIVE_IMAGE_COLUMN )
-	// 	bool hidden = GetDataTableBool( dataTable, i, TITAN_PASSIVE_HIDDEN_COLUMN )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	dataTable = GetDataTable( $"datatable/titan_passives.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef = GetDataTableString( dataTable, i, TITAN_PASSIVE_COLUMN )
+		int itemType = eItemTypes[ GetDataTableString( dataTable, i, TITAN_PASSIVE_TYPE_COLUMN ) ]
+		string name = GetDataTableString( dataTable, i, TITAN_PASSIVE_NAME_COLUMN )
+		string description = GetDataTableString( dataTable, i, TITAN_PASSIVE_DESCRIPTION_COLUMN )
+		string longDescription = GetDataTableString( dataTable, i, TITAN_PASSIVE_LONGDESCRIPTION_COLUMN )
+		asset image = GetDataTableAsset( dataTable, i, TITAN_PASSIVE_IMAGE_COLUMN )
+		bool hidden = GetDataTableBool( dataTable, i, TITAN_PASSIVE_HIDDEN_COLUMN )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// 	CreatePassiveData( i, itemType, hidden, itemRef, name, description, longDescription, image, cost )
-	// }
+		CreatePassiveData( i, itemType, hidden, itemRef, name, description, longDescription, image, cost )
+	}
 
 	// ///////////////////
 	// TITAN OS DATA
 	// ///////////////////
-	Registry_RPakJob( $"datatable/titan_passives.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
-		ref = TITAN_VOICE_COLUMN, name = TITAN_VOICE_NAME_COLUMN, image = [ eColType.ASSET ]})
+	Registry_RPakJob( $"datatable/titan_voices.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
+		ref = TITAN_VOICE_COLUMN, name = TITAN_VOICE_NAME_COLUMN,
+		itemType = eItemTypes.TITAN_OS, cost = 0, isHidden = false
+	})
 
-	dataTable = GetDataTable( $"datatable/titan_voices.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef = GetDataTableString( dataTable, i, TITAN_VOICE_COLUMN )
-		string name = GetDataTableString( dataTable, i, TITAN_VOICE_NAME_COLUMN )
-		string description = GetDataTableString( dataTable, i, TITAN_VOICE_DESCRIPTION_COLUMN )
-		asset image = GetDataTableAsset( dataTable, i, TITAN_VOICE_IMAGE_COLUMN )
-		bool hidden = GetDataTableBool( dataTable, i, TITAN_VOICE_HIDDEN_COLUMN )
+	// dataTable = GetDataTable( $"datatable/titan_voices.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef = GetDataTableString( dataTable, i, TITAN_VOICE_COLUMN )
+	// 	string name = GetDataTableString( dataTable, i, TITAN_VOICE_NAME_COLUMN )
+	// 	string description = GetDataTableString( dataTable, i, TITAN_VOICE_DESCRIPTION_COLUMN )
+	// 	asset image = GetDataTableAsset( dataTable, i, TITAN_VOICE_IMAGE_COLUMN )
+	// 	bool hidden = GetDataTableBool( dataTable, i, TITAN_VOICE_HIDDEN_COLUMN )
 
-		const bool IS_HIDDEN_ARG = false
-		CreateGenericItem( i, eItemTypes.TITAN_OS, itemRef, name, description, description, image, 0, IS_HIDDEN_ARG )
-	}
+	// 	const bool IS_HIDDEN_ARG = false
+	// 	CreateGenericItem( i, eItemTypes.TITAN_OS, itemRef, name, description, description, image, 0, IS_HIDDEN_ARG )
+	// }
 
+
+	var BakeTitan = ArmoryUtils_ClosureBox(void function(
+		int dataTableIndex, string titanRef, int cost, asset image, asset coreIcon, string name, string desc, string propertiesDesc,
+		int speedDisplay, int healthDisplay, int damageDisplay, int dashDisplay, int titanExecution,
+		int passive1Type, int passive2Type, int passive3Type, int passive4Type, int passive5Type, int passive6Type
+	) {
+		ItemData item = CreateBaseItemData( eItemTypes.TITAN, titanRef, false )
+		item.name = name; item.desc = desc; item.longdesc = propertiesDesc;
+		item.image = image; item.imageAtlas = IMAGE_ATLAS_HUD; item.cost = cost;
+
+		// Shorthand injection to populate item.i
+		table i = {
+			coreIcon = coreIcon, statSpeed = speedDisplay, statHealth = healthDisplay,
+			statDamage = damageDisplay, statDash = dashDisplay, titanExecution = titanExecution,
+			passive1Type = passive1Type, passive2Type = passive2Type, passive3Type = passive3Type,
+			passive4Type = passive4Type, passive5Type = passive5Type, passive6Type = passive6Type
+		}
+		foreach ( k, v in i ) { item.i[k] <- v }
+
+		item.persistenceStruct = "titanChassis[" + dataTableIndex + "]"
+		item.persistenceId = dataTableIndex
+	})
+
+	var ResolveTitanSettings = ArmoryUtils_ClosureBox(table function(
+		string setFile, string primeSetFile, string desc,
+		int speedDisplay, int healthDisplay, int damageDisplay, int dashDisplay
+	) {
+		#if SERVER || CLIENT
+		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
+		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
+		if ( primeSetFile != "" ) {
+			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
+			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
+		}
+		#endif
+
+		table res = {
+			name = expect string( GetPlayerSettingsFieldForClassName( setFile, "printname" ) ),
+			desc = expect string( GetPlayerSettingsFieldForClassName( setFile, "description" ) ),
+			titanExecution = GetTitanLoadoutPropertyExecutionType( setFile, "titanExecution" )
+		}
+
+		for ( int i = 1; i <= 6; i++ ) {
+			res["passive" + i + "Type"] <- GetTitanLoadoutPropertyPassiveType( setFile, "passive" + i )
+		}
+
+		return res
+	})
+
+	// Note the use of eParamSource.GENERATED to safely allocate RAM for these injected stats
+	int titanJobID = Registry_RPakJob( $"datatable/titans_mp.rpak", BakeTitan, {
+		name = [ eColType.STRING, "", eParamSource.GENERATED ], desc = [ eColType.STRING, "", eParamSource.GENERATED ], propertiesDesc = [ eColType.STRING, "desc", eParamSource.GENERATED ],
+
+		titanExecution = [ eColType.INT, "", eParamSource.GENERATED ],
+		speedDisplay = [ eColType.INT, "", eParamSource.GENERATED ], healthDisplay = [ eColType.INT, "", eParamSource.GENERATED ], damageDisplay = [ eColType.INT, "", eParamSource.GENERATED ], dashDisplay = [ eColType.INT, "", eParamSource.GENERATED ],
+		passive1Type = [ eColType.INT, "", eParamSource.GENERATED ], passive2Type = [ eColType.INT, "", eParamSource.GENERATED ], passive3Type = [ eColType.INT, "", eParamSource.GENERATED ],
+		passive4Type = [ eColType.INT, "", eParamSource.GENERATED ], passive5Type = [ eColType.INT, "", eParamSource.GENERATED ], passive6Type = [ eColType.INT, "", eParamSource.GENERATED ]
+	})
+
+	Registry_ModifyJob( titanJobID, 0, FilterDisabledRef, { ref = "titanRef" } )
+	Registry_ModifyJob( titanJobID, 1, ResolveTitanSettings, {
+		[$"datatable/titan_properties.rpak"] = [
+			"setFile", "primeSetFile", "desc", "speedDisplay",
+			"healthDisplay", "damageDisplay", "dashDisplay"
+		]
+	})
+
+	Registry_ExecutePipeline()
+
+	/*
 	var titanPropertiesDataTable = GetDataTable( $"datatable/titan_properties.rpak" )
 	var titansMpDataTable = GetDataTable( $"datatable/titans_mp.rpak" )
 	numRows = GetDatatableRowCount( titansMpDataTable )
@@ -1899,7 +2268,7 @@ void function InitItems()
 		// string special = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "special" ) )
 		// string antirodeo = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "antirodeo" ) )
 		// string coreAbility = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "coreAbility" ) )
-	}
+	} //*/
 
 	// ////////////////////////
 	// DLC1
@@ -1968,22 +2337,34 @@ void function InitItems()
 
 	/// =========== Persona customization ============
 	// var PlayerProfileCreate = ArmoryUtils_ClosureBox(void function(
-	// 	int dataTableIndex, int itemType, string ref, string name, asset image, int cost
+	// 	int dataTableIndex, int itemType, string ref, string name, asset image, int cost, bool hidden,
 	// ) {
-	// 	CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, false )
+	// 	CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, hidden )
 	// 	GetItemData( ref ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
 	// })
 
-	// var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool isHidden ) {
-	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, isHidden = (cost < 0), cost = max(cost, 0) }
+	// var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool hidden ) {
+	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, hidden = (cost < 0), cost = max(cost, 0) }
 	// })
 
 	// jobID = Registry_RPakJob( $"datatable/calling_cards.rpak", PlayerProfileCreate, {
-	// 	itemType = eItemTypes.CALLING_CARD, ref = CALLING_CARD_REF_COLUMN_NAME, image = [ eColType.ASSET ] })
+	// 	itemType = eItemTypes.CALLING_CARD,
+	// 	ref = CALLING_CARD_REF_COLUMN_NAME,
+	// 	name = CALLING_CARD_NAME_COLUMN_NAME,
+	// 	image = CALLING_CARD_IMAGE_COLUMN_NAME,
+	// 	hidden = false
+	// })
+	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = CALLING_CARD_REF_COLUMN_NAME})
 	// Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = CALLING_CARD_REF_COLUMN_NAME})
 
 	// jobID = Registry_RPakJob( $"datatable/callsign_icons.rpak", PlayerProfileCreate, {
-	// 	itemType = eItemTypes.CALLSIGN_ICON, ref = CALLSIGN_ICON_REF_COLUMN_NAME, image = [ eColType.ASSET ] })
+	// 	itemType = eItemTypes.CALLSIGN_ICON,
+	// 	ref = CALLSIGN_ICON_REF_COLUMN_NAME
+	// 	name = CALLSIGN_ICON_NAME_COLUMN_NAME,
+	// 	image = CALLSIGN_ICON_IMAGE_COLUMN_NAME,
+	// 	hidden = false
+	// })
+	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = CALLSIGN_ICON_REF_COLUMN_NAME})
 	// Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = CALLSIGN_ICON_REF_COLUMN_NAME})
 
 	{
@@ -2076,7 +2457,34 @@ void function InitItems()
 	// ///////////////////
 	// BURN METER REWARD DATA
 	// ///////////////////
+	/*
+	var CreateBurnMeter = ArmoryUtils_ClosureBox(void function(
+		int datatableIndex, string ref, string name, int cost,
+		asset image, asset model, bool hidden
+	) {
+		//	Client script error happens w/o server precache
+		#if SERVER || CLIENT
+		PrecacheModel( model )
+		#endif
 
+		CreateGenericItem( datatableIndex, eItemTypes.BURN_METER_REWARD, ref, name, name, name, image, cost, hidden )
+	}) //*/
+
+	jobID = Registry_RPakJob($"datatable/burn_meter_rewards.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
+		ref = BURN_REF_COLUMN_NAME, itemType = eItemTypes.BURN_METER_REWARD, name = BURN_NAME_COLUMN_NAME,
+		desc = BURN_NAME_COLUMN_NAME, isHidden = [eColType.BOOL, "selectable"] })
+	Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = BURN_REF_COLUMN_NAME})
+
+	var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
+	Registry_ModifyJob( jobID, 0, InvertHidden, {hidden = "selectable"})
+
+	#if SERVER || CLIENT
+	var ModelPrecache = ArmoryUtils_ClosureBox(table function(asset model) { PrecacheModel( model ); return {} })
+	table rpak2args = {}; rpak2args[$"datatable/burn_meter_rewards.rpak"] <- ["model"]
+	Registry_ModifyJob( jobID, 0, ModelPrecache, rpak2args)
+	#endif
+
+	/*
 	dataTable = GetDataTable( $"datatable/burn_meter_rewards.rpak" )
 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
 	{
@@ -2097,7 +2505,7 @@ void function InitItems()
 
 		bool hidden = !GetDataTableBool( dataTable, row, GetDataTableColumnByName( dataTable, "selectable" ) )
 		CreateGenericItem( row, eItemTypes.BURN_METER_REWARD, itemRef, name, description, description, image, cost, hidden )
-	}
+	} //*/
 
 	//		Execute
 	Registry_ExecutePipeline()

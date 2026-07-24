@@ -1,11 +1,6 @@
 //		Imports
 use rrplug::{
-	bindings::squirreldatatypes::{
-		SQObject, SQClosure
-	},
-	high::{
-		squirrel::SQHandle,
-	},
+	bindings::squirreldatatypes::{SQObject},
 	prelude::*,
 };
 
@@ -19,6 +14,11 @@ macro_rules! get_handle {
 			format!("Argument validation failed: expected {}", stringify!($ty))
 		))
 	}};
+}
+
+//	Registration router
+pub fn register_funcs() {
+	register_sq_functions(closure_box);
 }
 
 // ======================================================
