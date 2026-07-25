@@ -450,7 +450,6 @@ const string PHASE_DUMP						= "Task '%s' encountered error | Log: $s"	//"[%s]"
 const string INFER_WARN_NULL				= "b.value != null"
 const string INFER_INFO_GETTER_SET			= "Setting getters for Task '%s' | Log: $s"	//"[%s]
 
-const string INFER_ERROR_INFERENCE_FAIL		= "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?"
 const string INFER_ERROR_OVERRIDE_INV		= "Task '%s' override '%s' invalid: target lacks this param"
 const string INFER_ERROR_VALUE_NULL			= "Task '%s' crashed, argument '%s' has null value"
 
@@ -459,6 +458,9 @@ const string CACHE_MISC_RPAK_INDEX			= "%s#[%s]"
 
 const string CACHE_INFO_CACHED				= "Task '%s' cached RPak %s (%d rows)"
 const string CACHE_ERROR_NO_COLUMN			= "Task '%s' requested %s#\"%s\" which does not exist"
+
+const string CACHE_ERROR_BAD_TASK			= "Requested task '%s', which does not exist"
+const string CACHE_ERROR_INFERENCE_FAIL		= "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?"
 
 //	PATCH Phase
 const string PATCH_INFO_VALIDATED_BINDS		= "Mutator '%s' bindings validated | Log: $s"	//"[%s]"
@@ -490,8 +492,6 @@ enum eParamSource { DATATABLE, ROW_INDEX, STATIC_VAL, GENERATED }
 //		ParamBinding
 //	Links a column in registry.cache to a function parameter
 struct ParamBinding {
-	int priority = -1
-
 	//	Binding destination & source
 	string argName	//	Parsed or given parameter name
 	string colName	//	Target DataTable column name
@@ -511,9 +511,6 @@ struct RPakData {
 	table< string, int > colTypes		//	"cost" -> eColType.INT
 	table< string, array<var> > data	//	"cost" -> [ 1, 2, 3 ]
 }
-
-
-
 
 ///	===========================================================================
 ///								Tasks Structs by Phase
@@ -548,8 +545,16 @@ struct TaskInfer_Blueprint {
 
 ///	=== CACHE PHASE ===========================================================
 //		Data binding
+//	Applies overrides to datatable columns / argument values
+struct TaskCache_BindData {
+	string name
+
+	asset rpakPath
+	table overrides
+}
+
 //	Creates bindings for RPakData, including column + static overrides
-struct TaskInfer_RPakData {
+struct TaskCache_BindRPak {
 	string name
 
 	asset rpakPath
@@ -557,7 +562,7 @@ struct TaskInfer_RPakData {
 }
 
 //	Creates / manages bindings for generated data, very WIP. TODO
-struct TaskInfer_Generated {
+struct TaskCache_Generated {
 	string name
 
 	array<string> argNames
@@ -566,11 +571,11 @@ struct TaskInfer_Generated {
 
 
 //	Consumes bindings to cache data from RPaks
-struct TaskCache_RPakData {
-	int jobID
+// struct TaskCache_BindRPak {
+// 	int jobID
 
-	asset rpakPath
-}
+// 	asset rpakPath
+// }
 
 ///	=== PATCH PHASE ===========================================================
 //	Ordered tasks with an internal data struct. Necessary for the Mutate phase
@@ -609,6 +614,7 @@ table< string, ParamBinding > inferences = {}
 //	Registry
 struct {
 	table logger = {}
+	int topoID = -1
 
 	/// === CALLBACKS =========================================================
 //	array< void functionref() > cb_OnRegistryInit
@@ -620,10 +626,8 @@ struct {
 	array<TaskInfer_Blueprint>	queueInfer_Blueprint
 
 	//	Cache Phase
-	array<TaskInfer_RPakData>	queueInfer_RPakData
-	array<TaskInfer_Generated>	queueInfer_Generated
-
-	array<TaskCache_RPakData>	queueCache_RPakData
+	array<TaskCache_BindData>	queueCache_BindData
+	array<TaskCache_BindRPak>	queueCache_BindRPak
 
 	//	Mutate Phase
 	array<TaskOrdered>			queuePatchAllTasks
@@ -636,6 +640,8 @@ struct {
 	table< string, int > taskCounter
 
 	//	Maps task name -> array of dependent bindings
+	table< string, array<ParamBinding> > allBindings
+
 	table< string, array<ParamBinding> > facBindings
 	table< string, array<ParamBinding> > mutBindings
 	table< string, array<ParamBinding> > genBindings
@@ -658,16 +664,17 @@ struct {
 ///	============================================================================
 void function RegistryPipelineInit() {
 	//		Reset state
-	registry.logger = {}
 	registry.logger = ArmoryUtil_CreateLogger()
+	registry.logger.SetPhase("INIT")
+
+	registry.topoID = Topo_Create()
 
 	//	Clear queues
 	registry.queueInfer_Function.clear()
 	registry.queueInfer_Blueprint.clear()
 
-	registry.queueInfer_RPakData.clear()
-	registry.queueInfer_Generated.clear()
-	registry.queueCache_RPakData.clear()
+	registry.queueCache_BindData.clear()
+	registry.queueCache_BindRPak.clear()
 
 	registry.queuePatchAllTasks.clear()
 
@@ -740,68 +747,13 @@ ParamBinding function InferParamBinding( string argName ) {
 	return b
 }
 
-///	============================================================================
+///	===========================================================================
 ///								Job Builders
-///	============================================================================
-/*	//	These are deprecated
-int function Registry_RPakJob( asset rpakPath, var target, table overrides = {} ) {
-	//	Generate a unique identity for this specific factory function run
-	int currentJobID = registry.jobCounter
-	registry.jobCounter++
-
-	//	1. Instantiate and queue the Parameter Inference Phase
-	TaskInfer_RPak inferTask
-	inferTask.jobID		= currentJobID
-	inferTask.rpakPath	= rpakPath
-	inferTask.target	= target
-	inferTask.overrides	= overrides
-	registry.queueInfer_RPak.append( inferTask )
-
-	//	2. Instantiate and queue the Data Extraction/Caching Phase
-	// ProcessCache() cleanly skips already cached or un-bound RPaks, so duplicate paths are harmless
-	TaskCache_RPakData cacheTask
-	cacheTask.jobID		= currentJobID
-	cacheTask.rpakPath	= rpakPath
-	registry.queueCache_RPakData.append( cacheTask )
-
-	//	3. Instantiate and queue the Execution/Bake Phase
-	TaskBuild_ItemData bakeTask
-	bakeTask.jobID		= currentJobID
-	bakeTask.rpakPath	= rpakPath
-	bakeTask.target		= target
-	registry.queueBuild_ItemData.append( bakeTask )
-
-	//	Return the ID
-	return currentJobID
-}
-
-//  Attaches an in-place modifier (filtering/editing) to a job
-void function Registry_ModifyJob( int jobID, int priority, var target, table rpak2args = {} ) {
-	//	1. Instantiate and queue the Parameter Inference Phase
-	TaskInfer_Mutator bindTask
-	bindTask.jobID		= jobID
-	bindTask.priority	= priority
-
-	bindTask.target		= target
-	bindTask.rpak2args	= rpak2args	///	Maps { $"datatable/xyz" = [ "arg1", "arg2", ... ]}
-
-	registry.queueInfer_Mutator.append( bindTask )
-
-	//	2. Instantiate and queue the Mutation Phase
-	// skdlhg;ak.sjdhg lakdfjg
-	TaskPatchModify modifyTask
-	modifyTask.jobID	= jobID
-	modifyTask.priority = priority
-	modifyTask.target	= target
-
-	registry.queuePatchModify.append( modifyTask )
-}	//*/
-
-//	NEW
+///	===========================================================================
 TaskInfer_Blueprint function Registry_ReflectFunc( var target ) {
 	TaskInfer_Blueprint bp
 
-	local infos = task.target.getinfos()
+	local infos = target.getinfos()
 
 	array rawArgs = expect array(infos.parameters)
 	foreach( a in rawArgs ) { bp.rawArgs.append(expect string(a)); }
@@ -814,7 +766,7 @@ TaskInfer_Blueprint function Registry_ReflectFunc( var target ) {
 	return bp
 }
 
-void function Registry_BindFunction(
+void function Registry_InferFunction(
 	var target, int taskType, string taskName,
 	array<string> before = [], array<string> after = []
 ) {
@@ -823,87 +775,211 @@ void function Registry_BindFunction(
 	int taskNum = 0
 	if (taskName in registry.taskCounter) {
 		taskNum = registry.taskCounter[taskName]
+
+		string prevName = format("%s_%3d", taskName, taskNum-1)
+		before.append(prevName)
 	} else { registry.taskCounter[taskName] <- taskNum }
-	registry.taskCounter ++
+	registry.taskCounter[taskName] ++
 
-	//	Add
-	string adjName = taskName
+	//	Adjust name
+	string currName = format("%s_%3d", taskName, taskNum)
 
+	//		Register task and dependencies
+	Topo_AddNode( registry.topoID, currName )
+	foreach (string b in before) { Topo_AddEdge(registry.topoID, b, currName) }
+	foreach (string a in after) { Topo_AddEdge(registry.topoID, currName, a) }
 
-}
+	//		Initiate and queue task for parameter inference phase
+	//	the TaskInfer_Function should be doing the "build blueprint" block above
+	TaskInfer_Function taskInfer
+	taskInfer.name		= currName
+	taskInfer.taskType	= taskType
+	taskInfer.target	= target
+	registry.queueInfer_Function.append(taskInfer)
 
+	if (taskType == eTaskType.FACTORY) {
+		//	Initiate and queue task for ItemData building phase
+		TaskBuild_ItemData taskBuild
+		taskBuild.name		= currName
+		taskBuild.target	= target
+		registry.queueBuild_ItemData.append(taskBuild)
 
-
-int function Registry_BindFactory( var target ) {
-	int jobID = registry.jobCounter
-	registry.jobCounter++
-
-	TaskInfer_Blueprint bp = Registry_ReflectFunc( target )
-
-	//		Initialize bindings from target
-	array<ParamBinding> fromFunc = []
-	foreach (int i, string argName in task.rawArgs) {
-		ParamBinding b = InferParamBinding(argName)
-
-		//	Handle optional parameters: assign STATIC_VAL and fetch default
-		if (i >= task.defsIdx) {
-			b.dataSource = eParamSource.STATIC_VAL
-			b.value = task.rawDefs[ i - task.defsIdx ]
-		}
-
-		//	Append to list
-		fromFunc.append(b)
+		//	That's it
+		return
 	}
 
-	//		Track bindings in registry
-	//	This would have been done inside a conditional, since it's assumed that
-	//	the job is created here we don't need the conditional block.
-	registry.funcBindings[task.jobID] <- []
-	bp.destArray = registry.funcBindings[task.jobID]
-
-	//		Return
-	return jobID
+	//	Initiate and queue task for patching phase
+	TaskOrdered patchTask
+	patchTask.name		= currName
+	patchTask.taskType	= taskType
+	patchTask.i			= target
+	registry.queuePatchAllTasks.append(patchTask)
 }
 
-//		TODO I don't see a need for this yet but it will come up later
-// void function Registry_BindStatic( int jobID, table overrides ) {
-// }
+void function Registry_InferRPakData(
+	string taskName, asset rpakPath, table overrides = {},
+) {
+	//		Find parameter destination
+	if (!(taskName in registry.taskCounter)) {
+		registry.logger.Warn("Attempted to bind data to unknown task '%s'", taskName)
+		return
+	}
 
-// void function Registry_BindRPak( int jobID, asset rpakPath, table rpak2args ) {
-// }
+	//	Retrieve tasks bound to this name
+	array<string> taskNames = []
+	for (int i = 0; i < registry.taskCounter[taskName]; i++) {
+		taskNames.append( format("%s_%3d", taskName, i) )
+	}
+
+	//		Instantiate tasks
+	//	Instantiate and queue tasks for caching phase
+	foreach (string currName in taskNames) {
+		TaskCache_BindRPak taskPatch
+		taskPatch.name		= currName
+		taskPatch.rpakPath	= rpakPath
+		taskPatch.overrides	= overrides
+		registry.queueCache_BindData.append(taskCache)
+
+		TaskCache_BindRPak taskCache
+		taskCache.name		= currName
+		taskCache.rpakPath	= rpakPath
+		taskCache.overrides	= overrides
+		registry.queueCache_BindRPak.append(taskCache)
+	}
+}
 
 ///	============================================================================
 ///								Task Processing
 ///	============================================================================
 void function Registry_InferPhase() {
-	table<int, asset> job2rpak = {}
+	registry.logger.SetPhase("INFER")
 
-	//		Inferred bindings
-	foreach (TaskInfer_RPak task in registry.queueInfer_RPak) {
-		//		Sanity Checks
-		//	Make sure the job has been initialized
-		if (!(task.jobID in registry.funcBindings)) { continue; }
+	//	Infer bindings from function parameter reflection
+	foreach (TaskInfer_Function task in registry.queueInfer_Function) {
+		//		Sanity checks
+		//	Preemptive null name check - can't index
+		if (task.name == "") { continue; }
 
-		//	Preemptive null check for safety
-		// if (task.target == null) {
-		// 	printt("REGISTRY [BIND]: WARNING: task.target == null")
-		// 	continue
-		// }
+		//	Preemptive null target check - nothing to read
+		if (task.target == null) { continue; }
 
-		//	Find binding arrays
-		array<ParamBinding> fromFunc = registry.funcBindings[task.jobID]
-		array<ParamBinding> fromTable = []
-		foreach (ParamBinding b in fromFunc) {
-			//		Sanity Checks
-			//	Check b.value to eliminate already-set data
-			if (b.value != null) {
-				printt("REGISTRY [BIND]: WARNING: b.value != null")
-				continue
+		//	Ensure the function signature matches taskType
+		/* implementation... */
+
+		//		Build Blueprint
+		//	Retrieve base data
+		TaskInfer_Blueprint bp = Registry_ReflectFunc( target )
+
+		//	Initialize bindings from target
+		array<ParamBinding> fromFunc = []
+		foreach (int i, string argName in task.rawArgs) {
+			ParamBinding b = InferParamBinding(argName)
+
+			//	Handle optional parameters: assign STATIC_VAL and fetch default
+			if (i >= task.defsIdx) {
+				b.dataSource = eParamSource.STATIC_VAL
+				b.value = task.rawDefs[ i - task.defsIdx ]
 			}
 
-			//	Handle overrides: column, type, and data override
+			//	Append to list
+			fromFunc.append(b)
+		}
+
+		//		Populate registry
+		//	Index bindings into registry
+		table< string, array<ParamBinding> > destTable = {}
+		switch (taskType) {
+			case eTaskType.FACTORY:		destTable = registry.facBindings; break;
+			case eTaskType.MUTATOR:		destTable = registry.mutBindings; break;
+			case eTaskType.GENERATOR:	destTable = registry.genBindings; break;
+
+			default:
+				break;
+		}
+
+		//	Link ParamBinding arrays
+		destTable[task.name] <- fromFunc
+		registry.allBindings[task.name] <- fromFunc
+		bp.destArray = destTable[task.name]
+	}
+
+	//*		Blueprints
+	foreach (TaskInfer_Blueprint task in registry.queueInfer_Blueprint) {
+		//		Initialize get functions
+		//	This was initially done in the Bake phase, but has been moved here
+		//	to allow the Mutate phase to access the Get functions. 'fromFunc'
+		//	contains all bindings, so only this needs to be mapped over.
+		registry.logger.Info(INFER_INFO_GETTER_SET, task.name)
+		foreach (ParamBinding b in fromFunc) {
+			registry.logger.Iter( b.argName )	//	Using this function automatically adds to a log line
+
+			switch (b.dataSource) {
+				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
+				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
+
+				case eParamSource.GENERATED:
+				case eParamSource.DATATABLE:
+					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task, logStr) {
+						if (b.value == null) {
+							registry.logger.Fatal( INFER_ERROR_VALUE_NULL, task.name, b.colName );
+						}
+
+						array arr = expect array(b.value)
+						string typeStr = expect string( arr[r] )
+						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
+					}; break; }
+
+					b.Get = var function( int r ) : (b, task, logStr) {
+						if (b.value == null) {
+							registry.logger.Fatal( INFER_ERROR_VALUE_NULL, task.name, b.colName );
+						}
+
+						return (expect array(b.value))[r]
+					}; break;
+			}
+		}
+	}
+
+	//		Clear queues
+	registry.queueInfer_Function.clear()
+	registry.queueInfer_RPakData.clear()
+	registry.queueInfer_Blueprint.clear()
+}
+
+void function Registry_CachePhase() {
+	registry.logger.SetPhase("CACHE")
+
+	//		Process overrides, link bindings
+	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
+		//		Retrieve task-specific bindings
+		//	Can't operate on something that isn't indexed
+		if( !(task.name in registry.allBindings) ) {
+			registry.logger.Fatal( CACHE_ERROR_BAD_TASK, task.name)
+		}
+
+		array<ParamBinding> taskBindings = registry.allBindings[task.name]
+
+		//	1).	Validate overrides against arguments
+		//	First block of deprecated TaskBindings_Blueprint code, can't fetch
+		//	columns that aren't part of the datatable
+		foreach (string key, var val in task.overrides) {
+            bool isValid = false
+            foreach (ParamBinding b in taskBindings) {
+				isValid = (b.argName == key) || isValid
+            }
+
+            if (!isValid) {
+				registry.logger.Fatal( CACHE_ERROR_INVALID_OVERRIDE, task.name, key )
+			}
+        }
+
+		//	2).	Apply overrides
+		//	Second block excerpt, allows for flexible overriding - type,
+		//	column, static values, etc. Essential for type compatibility
+		array<ParamBinding> fromTable = []
+		foreach (ParamBinding b in taskBindings) {
 			if (b.argName in task.overrides) {
-				var newVal = task.overrides[argName]
+				var newVal = task.overrides[b.argName]
 				switch (typeof(newVal)) {
 					case "array":
 						array arr = expect array(newVal)
@@ -912,13 +988,12 @@ void function Registry_InferPhase() {
 						//	Column type override
 						b.dataType = expect int(arr[0])
 
-						if (arr.len() > 1) { b.colName = expect string(arr[1]); }
-						if (arr.len() > 2) { b.dataSource = expect int(arr[2]); }
-
+						//	Column name override (optional)
+						if (arr.len()< 2) { break; }
+						b.colName = expect string(arr[1])
 						break;
 
 					case "string":
-						//b.dataSource = eParamSource.DATATABLE
 						b.colName = expect string(newVal)
 						break;
 
@@ -929,192 +1004,40 @@ void function Registry_InferPhase() {
 				}
 			}
 
-			//	Append: all bindings depend on func, some depend on the rpak
+			//	3).	Queue datatable dependencies
+			//	Third block, directly links ParamBindings to RPaks
 			if (b.dataSource == eParamSource.DATATABLE) {
 				if (b.colName == "") {
-					throw "REGISTRY [BIND]: ERROR: Job " +
-						task.jobID + " param '" + argName +
-						"' cannot be inferred from '" + task.rpakPath +
-						"'. Missing override?"
+					registry.logger.Fatal( CACHE_ERROR_INFERENCE_FAIL, task.name, b.argName, task.rpakPath )
 				}
 
 				fromTable.append(b)
 			}
-
-			fromFunc.append(b)
 		}
 
-		//	Add to registry
+		//	Patch over rpakBindings
 		if( task.rpakPath in registry.rpakBindings ) {
 			registry.rpakBindings[task.rpakPath].extend(fromTable)
 		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
 	}
 
-	/*		Mutator bindings
-	foreach (TaskInfer_Mutator task in registry.queueInfer_Mutator) {
-		/// =========== Functionality ===========
-		TaskInfer_Blueprint bp = Registry_ReflectFunc( target )
-		bp.jobID = task.jobID
-
-		if (task.jobID in job2rpak) {
-			bp.rpakPath = job2rpak[task.jobID]
-		}
-
-		//	2). Iterate over the args
-		bp.overrides = {}
-		foreach (var key, var args in task.rpak2args) { switch (typeof(key)) {
-			case "asset":
-				bp.rpakPath = expect asset(key)
-				foreach (string arg in expect array(args)) { bp.overrides[arg] <- arg }
-				break;
-
-			case "string":
-				bp.overrides[expect string(key)] <- args
-				break;
-
-			default:
-				throw "REGISTRY [BIND]: ERROR: Job " + task.jobID +
-					" specified invalid key type '" + typeof(key) +
-					"'. Expected asset, string, or tuple."
-				break;
-		}}
-
-		if (!(task.jobID in registry.mut8Bindings)) {
-			registry.mut8Bindings[task.jobID] <- []
-		}
-		bp.destArray = registry.mut8Bindings[task.jobID]
-		registry.queueInfer_Blueprint.append(bp)
-	}	//*/
-
-	//*		Blueprints
-	foreach (TaskInfer_Blueprint task in registry.queueInfer_Blueprint) {
-		foreach (string key, var val in task.overrides) {
-			bool isValid = false
-			foreach( string argName in task.rawArgs) {
-				isValid = (argName == key) || isValid
-			}
-
-			if (!isValid) {
-				throw "REGISTRY [BIND]: ERROR: Job " + task.jobID +
-					" override '" + key + "' invalid: target lacks this param"
-			}
-		}
-		//	1). Create bindings
-		//	Arguments cannot be seperate, .acall() requires specific order
-		array<ParamBinding> fromFunc = task.destArray
-		array<ParamBinding> fromTable = []
-		foreach (int i, string argName in task.rawArgs) {
-			ParamBinding b = InferParamBinding(argName)
-
-			//	Handle optional parameters: assign STATIC_VAL and fetch default
-			if (i >= task.defsIdx) {
-				b.dataSource = eParamSource.STATIC_VAL
-				b.value = task.rawDefs[ i - task.defsIdx ]
-			}
-
-			//	Handle overrides: column, type, and data override
-			// if (argName in task.overrides) {
-			// 	var newVal = task.overrides[argName]
-			// 	switch (typeof(newVal)) {
-			// 		case "array":
-			// 			array arr = expect array(newVal)
-			// 			b.colName = argName
-
-			// 			//	Column type override
-			// 			b.dataType = expect int(arr[0])
-
-			// 			if (arr.len() > 1) { b.colName = expect string(arr[1]); }
-			// 			if (arr.len() > 2) { b.dataSource = expect int(arr[2]); }
-
-			// 			break;
-			// 		case "string":
-			// 			//b.dataSource = eParamSource.DATATABLE
-			// 			b.colName = expect string(newVal)
-			// 			break;
-			// 		default:
-			// 			b.dataSource = eParamSource.STATIC_VAL
-			// 			b.value = newVal
-			// 			break;
-			// 	}
-			// }
-
-			//	Append: all bindings depend on func, some depend on the rpak
-			if (b.dataSource == eParamSource.DATATABLE) {
-				if (b.colName == "") {
-					throw "REGISTRY [BIND]: ERROR: Job " +
-						task.jobID + " param '" + argName +
-						"' cannot be inferred from '" + task.rpakPath +
-						"'. Missing override?"
-				}
-
-				fromTable.append(b)
-			}
-
-			fromFunc.append(b)
-		}
-
-		//	2). Initialize get functions
-		//	This was initially done in the Bake phase, but has been moved here
-		//	to allow the Mutate phase to access the Get functions. 'fromFunc'
-		//	contains all bindings, so only this needs to be mapped over.
-		string logStr = ""
-		foreach (ParamBinding b in fromFunc) {
-			logStr += b.argName + ", "
-			switch (b.dataSource) {
-				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
-				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
-
-				case eParamSource.GENERATED:
-				case eParamSource.DATATABLE:
-					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task, logStr) {
-						if (b.value == null) {
-							printt("REGISTRY [BIND]: Processing job " + task.jobID + " encountered error | Log: [" + logStr + "]")
-							throw "REGISTRY [BIND]: Crashed on job " +
-								task.jobID + ", parameter '" +
-								b.colName + "' has null value"
-						}
-
-						array arr = expect array(b.value)
-						string typeStr = expect string( arr[r] )
-						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
-					}; break; }
-
-					b.Get = var function( int r ) : (b, task, logStr) {
-						if (b.value == null) {
-							printt("REGISTRY [BIND]: Processing job " + task.jobID + " encountered error | Log: [" + logStr + "]")
-							throw "REGISTRY [BIND]: Crashed on job " +
-								task.jobID + ", parameter '" +
-								b.colName + "' has null value"
-						}
-						return (expect array(b.value))[r]
-					}; break;
-			}
-		}
-		printt("REGISTRY [BIND]: Setting getters for job " + task.jobID + " | Log: [" + logStr + "]")
-
-		//	3). Add to registry
-		//	Index/extend rpakBindings
-		if( task.rpakPath in registry.rpakBindings ) {
-			registry.rpakBindings[task.rpakPath].extend(fromTable)
-		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
-	} //*/
-
-	//		Clear queues
-	registry.queueInfer_Mutator.clear()
-	registry.queueInfer_RPak.clear()
-}
-
-void function Registry_CachePhase() {
-	//		RPakData caching
-	foreach (TaskCache_RPakData task in registry.queueCache_RPakData) {
+	//	Second pass
+	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
 		//		Sanity checks
-		//	We shouldn't be revisiting an rpak, since bindings are grouped by rpak
-		if ( !(task.rpakPath in registry.rpakBindings) ) { continue }
+		//	Can't retrieve from something that's not cached
+		asset rpakPath = task.rpakPath
+		if (!(rpakPath in registry.rpakBindings)) { continue }
 
-		//		Cache Hit
-		if ( task.rpakPath in registry.cache ) {
-			RPakData rpak = registry.cache[task.rpakPath]
-			foreach ( ParamBinding b in registry.rpakBindings[task.rpakPath] ) {
+		//	Can't do shit without bindings
+		array<ParamBinding> bindings = registry.rpakBindings[task.rpakPath]
+
+		//	Shouldn't be revisiting rpaks, since bindings are grouped by rpak
+
+		//	[A] Cache Hit
+		//	Link b.value to the cache - huge time saver
+		if (rpakPath in registry.cache) {
+			RPakData rpak = registry.cache[rpakPath]
+			foreach ( ParamBinding b in bindings ) {
 				if ( b.value == null && b.colName in rpak.data ) {
 					b.value = rpak.data[ b.colName ]
 				}
@@ -1123,35 +1046,32 @@ void function Registry_CachePhase() {
 			continue
 		}
 
-		//		Cache miss
+		//	[B] Cache Miss
 		//	Access data from disk
-		var dt = GetDataTable(task.rpakPath)
-		int numRows = GetDatatableRowCount( dt )
-
-		string log = "REGISTRY [CCH0]: " + task.rpakPath + "\"#["
+		var dt = GetDataTable(rpakPath)
+		int numRows = GetDatatableRowCount(dt)
 
 		//	Access bindings
 		// Only the RPak-dependent bindings need to be fetched
 		// Deduplicate columns to prevent multiple access
-		array<ParamBinding> bindings = registry.rpakBindings[task.rpakPath]
 		table< string, array<int> > colsToFetch = {}
 		foreach ( ParamBinding b in bindings ) {
-			log += "\"" + b.colName + "\""
-
 			//	Skip already tracked columns
-			if (b.colName in colsToFetch) { log += " (skipped), "; continue; }
+			if (b.colName in colsToFetch) {
+				continue
+			}
+
+			registry.logger.Iter( b.colName )
 
 			//	Fetch numeric index for column, throw error if not found
 			int colIdx = GetDataTableColumnByName( dt, b.colName )
 			if (colIdx == -1) {
-				throw "REGISTRY [CCH0]: ERROR: Job " + task.jobID + " requested " + task.rpakPath + "#\"" + b.colName + "\" which does not exist"
+				registry.logger.Fatal(CACHE_ERROR_NO_COLUMN, task.name, rpakPath, b.colName )
 			}
 
 			//	Index into colsToFetch
 			colsToFetch[b.colName] <- [colIdx, b.dataType]
-			log += " (" + colIdx + ", " + b.dataType + "), "
 		}
-		printt(log + "\b\b]")
 
 		//		Cache RPak data
 		RPakData rpak
@@ -1192,12 +1112,12 @@ void function Registry_CachePhase() {
 		}
 
 		//		Save to central state
-		registry.cache[task.rpakPath] <- rpak
-		printt("REGISTRY [CCH1]: Job " + task.jobID + " cached RPak " + task.rpakPath + " (" + numRows + " rows)")
+		registry.cache[rpakPath] <- rpak
+		registry.logger.Info( CACHE_INFO_CACHED, task.name, rpakPath, numRows )
 	}
 
 	//		Clear queues
-	registry.queueCache_RPakData.clear()
+	registry.queueCache_BindRPak.clear()
 }
 
 void function Registry_PatchPhase() {

@@ -102,16 +102,16 @@ string function Logger_Format() {
 ///	===========================================================================
 void function Logger_Iter( string fmtStr, ... ) {
     string text = _FormatArray( fmtStr, vargv )
-    int lastIdx = this.cText.len() - 1
+    int lastIdx = this.colText.len() - 1
 
     // Start new bracket if empty or previous row wasn't ITER
-    if ( lastIdx < 0 || this.cLevel[lastIdx] != "ITER" ) {
+    if ( lastIdx < 0 || this.colLevel[lastIdx] != "ITER" ) {
         this.Push( "ITER", format( this.configIter.brackets, text ) )
     } else {
         // Splice into existing bracket
-        string existing = this.cText[lastIdx]
+        string existing = this.colText[lastIdx]
         string stripped = existing.slice( 0, existing.len() - 1 )
-        this.cText[lastIdx] = stripped + this.configIter.separator + text + "]"
+        this.colText[lastIdx] = stripped + this.configIter.separator + text + "]"
     }
 }
 
@@ -138,19 +138,19 @@ void function Logger_Fatal( string fmtStr, ... ) {
 ///		Return a table that imitates functionality of a class instance
 ///	===========================================================================
 table function ArmoryUtil_CreateLogger(
-	string initPhase = "INIT",
-	table customFormat = null,
-    table customStatus = null,
-    table customIter = null
+	string initPhase	= "INIT",
+	table customFormat	= {},
+    table customStatus	= {},
+    table customIter	= {}
 ) {
     //	Initialize table state
     table logger = {
         currPhase  = initPhase
         printIndex = 0
 
-        cPhase = []
-        cLevel = []
-        cText  = []
+        colPhase = []
+        colLevel = []
+        colText  = []
 
         configFormat = {
             paddingPrefix = 2,  justifyPrefix = 1,
@@ -170,17 +170,17 @@ table function ArmoryUtil_CreateLogger(
     }
 
 	//	Safely merge user configuration
-    if (customFormat != null) { foreach (key, val in customFormat) {
+	foreach (key, val in customFormat) {
 		if (key in logger.configFormat) { logger.configFormat[key] = val }
-    }}
+    }
 
-    if (customStatus != null) { foreach (key, val in customStatus) {
+	foreach (key, val in customStatus) {
 		if (key in logger.configStatus) { logger.configStatus[key] = val }
-    }}
+    }
 
-    if (customIter != null) { foreach (key, val in customIter) {
+	foreach (key, val in customIter) {
 		if (key in logger.configIter) { logger.configIter[key] = val }
-    }}
+    }
 
     //	Bind methods to table
     logger.SetPhase <- Logger_SetPhase
