@@ -5,19 +5,19 @@ use rrplug::{
 };
 
 //		Macros
-macro_rules! get_handle {
-	($obj:expr, $ty:ident) => {{
-		::rrplug::high::squirrel::SQHandle::<::rrplug::bindings::squirreldatatypes::$ty>::try_new(
-			($obj).clone(),
-		)
-		.map_err(|_| ::rrplug::errors::CallError::FunctionFailed(
-			format!("Argument validation failed: expected {}", stringify!($ty))
-		))
-	}};
-}
+// macro_rules! get_handle {
+// 	($obj:expr, $ty:ident) => {{
+// 		::rrplug::high::squirrel::SQHandle::<::rrplug::bindings::squirreldatatypes::$ty>::try_new(
+// 			($obj).clone(),
+// 		)
+// 		.map_err(|_| ::rrplug::errors::CallError::FunctionFailed(
+// 			format!("Argument validation failed: expected {}", stringify!($ty))
+// 		))
+// 	}};
+// }
 
 //	Registration router
-pub fn register_funcs() {
+pub fn register() {
 	register_sq_functions(closure_box);
 }
 

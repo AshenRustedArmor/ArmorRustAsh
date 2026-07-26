@@ -52,12 +52,10 @@ const string PATCH_INFO_ERROR				= "Task '%s' | Log: $s"	//"[%s]"
 const string PATCH_ERROR_BIND_UNRESOLVED	= "Mutator '%s' argument '%s' has unresolved data binding."
 const string PATCH_ERROR_GETTER_NULL		= "Mutator '%s' aborted: Getter for argument '%s' resolved to null."
 const string PATCH_ERROR_BIND_MISSING		= "Mutator '%s' missing data binding for requested mutator param '%s'"
-
 const string PATCH_ERROR_EXPECTED_TABLE		= "Mutator '%s' row %d returned '%s', expected table"
+
 const string PATCH_ERROR_GEN_EXP_ARRAY		= "Generator '%s' expected array of tables, got %s"
 const string PATCH_ERROR_GEN_ROW_ARRAY		= "Generator '%s' row %d expected array of tables, got %s"
-
-const string PATCH_ERROR_EXPECTED_TYPE		= "Mutator/generator '%s' expected '%s', returned '%s'"
 
 //	BUILD Phase
 const string BUILD_ERROR_GETTER_NULL		= "Factory '%s' row %d aborted: Getter for argument '%s' resolved to null."
@@ -167,8 +165,7 @@ struct TaskOrdered {
 	string name
 	int taskType
 
-	var target
-	table i
+	var i
 }
 
 //	Mutate the cache with "table functionref target( ... )"

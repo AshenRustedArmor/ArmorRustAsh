@@ -1,6 +1,6 @@
 untyped
 
-global function ArmoryUtil_CreateLogger
+global function ArmoryUtils_CreateLogger
 
 ///	===========================================================================
 ///						Helper functions - file scope
@@ -34,8 +34,8 @@ array<string> function Logger_PushRow( string level, string message ) {
 string function Logger_Format() {
     if ( this.printIndex >= this.colPhase.len() ) return ""
 
-    table cfgFmt  = this.configFormat
-    table cfgStat = this.configStatus
+    table cfgFmt = expect table(this.configFormat)
+    table cfgStat = expect table(this.configStatus)
 
     // 1. Build alignment modifiers (-1 = left justified, 1 = right justified)
     string alignPrefix = cfgFmt.justifyPrefix == -1 ? "-" : ""
@@ -50,46 +50,46 @@ string function Logger_Format() {
     )
 
     // 3. Pre-calculate horizontal line segments
-    int contentWidth = 80 - (cfgFmt.paddingPrefix + cfgFmt.paddingPhase + cfgFmt.paddingLevel + 6)
+    int contentWidth = 80 - expect int(cfgFmt.paddingPrefix + cfgFmt.paddingPhase + cfgFmt.paddingLevel + 6)
     if ( contentWidth < 10 ) contentWidth = 10
 
-    string linePhase   = _RepStr( cfgFmt.charHorz, cfgFmt.paddingPhase )
-    string lineLevel   = _RepStr( cfgFmt.charHorz, cfgFmt.paddingLevel )
-    string lineContent = _RepStr( cfgFmt.charHorz, contentWidth )
+    string linePhase = _RepeatString(expect string(cfgFmt.charHorz), expect int(cfgFmt.paddingPhase))
+    string lineLevel = _RepeatString(expect string(cfgFmt.charHorz), expect int(cfgFmt.paddingLevel))
+    string lineContent = _RepeatString(expect string(cfgFmt.charHorz), contentWidth )
 
     // 4. Build output string
     string output = ""
 
-    for ( ; this.printIndex < this.colPhase.len(); this.printIndex++ ) {
-        int i = this.printIndex
-        string currPhase = this.colPhase[i]
-        string currLevel = this.colLevel[i]
-        string currText  = this.colText[i]
+    for (; expect int(this.printIndex) < expect array(this.colPhase).len(); this.printIndex++) {
+        int i = expect int(this.printIndex)
+        string currPhase = expect string(this.colPhase[i])
+        string currLevel = expect string(this.colLevel[i])
+        string currText = expect string(this.colText[i])
 
         bool changePhase = (i > 0 && currPhase != this.colPhase[i-1])
         bool changeLevel = (i > 0 && currLevel != this.colLevel[i-1])
 
         //	Draw Boundary Separators
         if ( (cfgStat.breakPhase && changePhase) || (cfgStat.breakLevel && changeLevel) ) {
-            string activePrefix = changePhase ? cfgStat.prefixPhase : cfgStat.prefixLevel
+            string activePrefix = changePhase ? expect string(cfgStat.prefixPhase) : expect string(cfgStat.prefixLevel)
 
             output += format( rowFmt,
-                activePrefix, cfgFmt.charBoth,
-                linePhase,    cfgFmt.charBoth,
-                lineLevel,    cfgFmt.charBoth,
+                activePrefix, expect string(cfgFmt.charBoth),
+                linePhase,    expect string(cfgFmt.charBoth),
+                lineLevel,    expect string(cfgFmt.charBoth),
                 lineContent
             )
         }
 
         // B. Visually deduplicate repeated phases/levels on continuous lines
-        string displayPhase = (cfgStat.breakPhase && !changePhase && i > 0) ? "" : currPhase
-        string displayLevel = (cfgStat.breakLevel && !changeLevel && i > 0) ? "" : currLevel
+        string displayPhase = (expect bool(cfgStat.breakPhase) && !changePhase && i > 0) ? "" : currPhase
+        string displayLevel = (expect bool(cfgStat.breakLevel) && !changeLevel && i > 0) ? "" : currLevel
 
         // C. Append the actual log row
         output += format( rowFmt,
-            "",           cfgFmt.charVert,
-            displayPhase, cfgFmt.charVert,
-            displayLevel, cfgFmt.charVert,
+            "", expect string(cfgFmt.charVert),
+            displayPhase, expect string(cfgFmt.charVert),
+            displayLevel, expect string(cfgFmt.charVert),
             currText
         )
     }
@@ -137,7 +137,7 @@ void function Logger_Fatal( string fmtStr, ... ) {
 ///								Logger Factory
 ///		Return a table that imitates functionality of a class instance
 ///	===========================================================================
-table function ArmoryUtil_CreateLogger(
+table function ArmoryUtils_CreateLogger(
 	string initPhase	= "INIT",
 	table customFormat	= {},
     table customStatus	= {},

@@ -441,43 +441,43 @@ Replace:	const string $1_INFO
 ///	===========================================================================
 ///							Error Formatting + Text
 ///	===========================================================================
-//		Text definitions
-//	General
-const string PHASE_THROW					= "REGISTRY [%s] %s: %s"
-const string PHASE_DUMP						= "Task '%s' encountered error | Log: $s"	//"[%s]"
+// //		Text definitions
+// //	General
+// const string PHASE_THROW					= "REGISTRY [%s] %s: %s"
+// const string PHASE_DUMP						= "Task '%s' encountered error | Log: $s"	//"[%s]"
 
-//	INFER Phase
-const string INFER_WARN_NULL				= "b.value != null"
-const string INFER_INFO_GETTER_SET			= "Setting getters for Task '%s' | Log: $s"	//"[%s]
+// //	INFER Phase
+// const string INFER_WARN_NULL				= "b.value != null"
+// const string INFER_INFO_GETTER_SET			= "Setting getters for Task '%s' | Log: $s"	//"[%s]
 
-const string INFER_ERROR_OVERRIDE_INV		= "Task '%s' override '%s' invalid: target lacks this param"
-const string INFER_ERROR_VALUE_NULL			= "Task '%s' crashed, argument '%s' has null value"
+// const string INFER_ERROR_OVERRIDE_INV		= "Task '%s' override '%s' invalid: target lacks this param"
+// const string INFER_ERROR_VALUE_NULL			= "Task '%s' crashed, argument '%s' has null value"
 
-//	CACHE Phase
-const string CACHE_MISC_RPAK_INDEX			= "%s#[%s]"
+// //	CACHE Phase
+// const string CACHE_MISC_RPAK_INDEX			= "%s#[%s]"
 
-const string CACHE_INFO_CACHED				= "Task '%s' cached RPak %s (%d rows)"
-const string CACHE_ERROR_NO_COLUMN			= "Task '%s' requested %s#\"%s\" which does not exist"
+// const string CACHE_INFO_CACHED				= "Task '%s' cached RPak %s (%d rows)"
+// const string CACHE_ERROR_NO_COLUMN			= "Task '%s' requested %s#\"%s\" which does not exist"
 
-const string CACHE_ERROR_BAD_TASK			= "Requested task '%s', which does not exist"
-const string CACHE_ERROR_INFERENCE_FAIL		= "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?"
+// const string CACHE_ERROR_BAD_TASK			= "Requested task '%s', which does not exist"
+// const string CACHE_ERROR_INFERENCE_FAIL		= "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?"
 
-//	PATCH Phase
-const string PATCH_INFO_VALIDATED_BINDS		= "Mutator '%s' bindings validated | Log: $s"	//"[%s]"
-const string PATCH_INFO_NO_DATA				= "Mutator '%s' has no data, skipping"
+// //	PATCH Phase
+// const string PATCH_INFO_VALIDATED_BINDS		= "Mutator '%s' bindings validated | Log: $s"	//"[%s]"
+// const string PATCH_INFO_NO_DATA				= "Mutator '%s' has no data, skipping"
 
-const string PATCH_INFO_ERROR				= "Task '%s' | Log: $s"	//"[%s]"
+// const string PATCH_INFO_ERROR				= "Task '%s' | Log: $s"	//"[%s]"
 
-const string PATCH_ERROR_BIND_UNRESOLVED	= "Mutator '%s' argument '%s' has unresolved data binding."
-const string PATCH_ERROR_GETTER_NULL		= "Mutator '%s' aborted: Getter for argument '%s' resolved to null."
-const string PATCH_ERROR_BIND_MISSING		= "Mutator '%s' missing data binding for requested mutator param '%s'"
-const string PATCH_ERROR_EXPECTED_TABLE		= "Mutator '%s' row %d returned '%s', expected table"
+// const string PATCH_ERROR_BIND_UNRESOLVED	= "Mutator '%s' argument '%s' has unresolved data binding."
+// const string PATCH_ERROR_GETTER_NULL		=
+// const string PATCH_ERROR_BIND_MISSING		= "Mutator '%s' missing data binding for requested mutator param '%s'"
 
-const string PATCH_ERROR_GEN_EXP_ARRAY		= "Generator '%s' expected array of tables, got %s"
-const string PATCH_ERROR_GEN_ROW_ARRAY		= "Generator '%s' row %d expected array of tables, got %s"
+// const string PATCH_ERROR_EXPECTED_TABLE		= "Mutator '%s' row %d returned '%s', expected table"
+// const string PATCH_ERROR_GEN_EXP_ARRAY		= "Generator '%s' expected array of tables, got %s"
+// const string PATCH_ERROR_GEN_ROW_ARRAY		= "Generator '%s' row %d expected array of tables, got %s"
 
-//	BUILD Phase
-const string BUILD_ERROR_GETTER_NULL		= "Factory '%s' row %d aborted: Getter for argument '%s' resolved to null."
+// //	BUILD Phase
+// const string BUILD_ERROR_GETTER_NULL		= "Factory '%s' row %d aborted: Getter for argument '%s' resolved to null."
 
 ///	===========================================================================
 ///							Data Storage + Handling
@@ -584,6 +584,12 @@ struct TaskOrdered {
 	string name
 	int taskType
 
+	var target
+
+	array<ParamBinding> taskBindings
+	array<ParamBinding> funcBindings
+	int numRows
+
 	var i
 }
 
@@ -664,10 +670,10 @@ struct {
 ///	============================================================================
 void function RegistryPipelineInit() {
 	//		Reset state
-	registry.logger = ArmoryUtil_CreateLogger()
+	registry.logger = ArmoryUtils_CreateLogger()
 	registry.logger.SetPhase("INIT")
 
-	registry.topoID = Topo_Create()
+	registry.topoID = ArmoryUtils_TopoCreate()
 
 	//	Clear queues
 	registry.queueInfer_Function.clear()
@@ -785,9 +791,9 @@ void function Registry_InferFunction(
 	string currName = format("%s_%3d", taskName, taskNum)
 
 	//		Register task and dependencies
-	Topo_AddNode( registry.topoID, currName )
-	foreach (string b in before) { Topo_AddEdge(registry.topoID, b, currName) }
-	foreach (string a in after) { Topo_AddEdge(registry.topoID, currName, a) }
+	ArmoryUtils_TopoNode( registry.topoID, currName )
+	foreach (string b in before) { ArmoryUtils_TopoEdge(registry.topoID, b, currName) }
+	foreach (string a in after) { ArmoryUtils_TopoEdge(registry.topoID, currName, a) }
 
 	//		Initiate and queue task for parameter inference phase
 	//	the TaskInfer_Function should be doing the "build blueprint" block above
@@ -812,7 +818,7 @@ void function Registry_InferFunction(
 	TaskOrdered patchTask
 	patchTask.name		= currName
 	patchTask.taskType	= taskType
-	patchTask.i			= target
+	patchTask.target	= target
 	registry.queuePatchAllTasks.append(patchTask)
 }
 
@@ -834,12 +840,6 @@ void function Registry_InferRPakData(
 	//		Instantiate tasks
 	//	Instantiate and queue tasks for caching phase
 	foreach (string currName in taskNames) {
-		TaskCache_BindRPak taskPatch
-		taskPatch.name		= currName
-		taskPatch.rpakPath	= rpakPath
-		taskPatch.overrides	= overrides
-		registry.queueCache_BindData.append(taskCache)
-
 		TaskCache_BindRPak taskCache
 		taskCache.name		= currName
 		taskCache.rpakPath	= rpakPath
@@ -868,17 +868,17 @@ void function Registry_InferPhase() {
 
 		//		Build Blueprint
 		//	Retrieve base data
-		TaskInfer_Blueprint bp = Registry_ReflectFunc( target )
+		TaskInfer_Blueprint bp = Registry_ReflectFunc( task.target )
 
 		//	Initialize bindings from target
 		array<ParamBinding> fromFunc = []
-		foreach (int i, string argName in task.rawArgs) {
+		foreach (int i, string argName in bp.rawArgs) {
 			ParamBinding b = InferParamBinding(argName)
 
 			//	Handle optional parameters: assign STATIC_VAL and fetch default
-			if (i >= task.defsIdx) {
+			if (i >= bp.defsIdx) {
 				b.dataSource = eParamSource.STATIC_VAL
-				b.value = task.rawDefs[ i - task.defsIdx ]
+				b.value = bp.rawDefs[ i - bp.defsIdx ]
 			}
 
 			//	Append to list
@@ -888,7 +888,7 @@ void function Registry_InferPhase() {
 		//		Populate registry
 		//	Index bindings into registry
 		table< string, array<ParamBinding> > destTable = {}
-		switch (taskType) {
+		switch (task.taskType) {
 			case eTaskType.FACTORY:		destTable = registry.facBindings; break;
 			case eTaskType.MUTATOR:		destTable = registry.mutBindings; break;
 			case eTaskType.GENERATOR:	destTable = registry.genBindings; break;
@@ -905,12 +905,14 @@ void function Registry_InferPhase() {
 
 	//*		Blueprints
 	foreach (TaskInfer_Blueprint task in registry.queueInfer_Blueprint) {
+		//		Access
+
 		//		Initialize get functions
 		//	This was initially done in the Bake phase, but has been moved here
 		//	to allow the Mutate phase to access the Get functions. 'fromFunc'
 		//	contains all bindings, so only this needs to be mapped over.
-		registry.logger.Info(INFER_INFO_GETTER_SET, task.name)
-		foreach (ParamBinding b in fromFunc) {
+		registry.logger.Info( "Setting getters for Task '%s'", task.name)
+		foreach (ParamBinding b in task.destArray) {
 			registry.logger.Iter( b.argName )	//	Using this function automatically adds to a log line
 
 			switch (b.dataSource) {
@@ -919,9 +921,9 @@ void function Registry_InferPhase() {
 
 				case eParamSource.GENERATED:
 				case eParamSource.DATATABLE:
-					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task, logStr) {
+					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task) {
 						if (b.value == null) {
-							registry.logger.Fatal( INFER_ERROR_VALUE_NULL, task.name, b.colName );
+							registry.logger.Fatal( "Task '%s' crashed, argument '%s' has null value", task.name, b.colName );
 						}
 
 						array arr = expect array(b.value)
@@ -929,9 +931,9 @@ void function Registry_InferPhase() {
 						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
 					}; break; }
 
-					b.Get = var function( int r ) : (b, task, logStr) {
+					b.Get = var function( int r ) : (b, task) {
 						if (b.value == null) {
-							registry.logger.Fatal( INFER_ERROR_VALUE_NULL, task.name, b.colName );
+							registry.logger.Fatal( "Task '%s' crashed, argument '%s' has null value", task.name, b.colName );
 						}
 
 						return (expect array(b.value))[r]
@@ -942,7 +944,6 @@ void function Registry_InferPhase() {
 
 	//		Clear queues
 	registry.queueInfer_Function.clear()
-	registry.queueInfer_RPakData.clear()
 	registry.queueInfer_Blueprint.clear()
 }
 
@@ -954,7 +955,7 @@ void function Registry_CachePhase() {
 		//		Retrieve task-specific bindings
 		//	Can't operate on something that isn't indexed
 		if( !(task.name in registry.allBindings) ) {
-			registry.logger.Fatal( CACHE_ERROR_BAD_TASK, task.name)
+			registry.logger.Fatal( "Requested task '%s', which does not exist", task.name)
 		}
 
 		array<ParamBinding> taskBindings = registry.allBindings[task.name]
@@ -969,7 +970,7 @@ void function Registry_CachePhase() {
             }
 
             if (!isValid) {
-				registry.logger.Fatal( CACHE_ERROR_INVALID_OVERRIDE, task.name, key )
+				registry.logger.Fatal( "Task '%s' requested %s#\"%s\" which does not exist", task.name, task.rpakPath, key )
 			}
         }
 
@@ -1008,7 +1009,7 @@ void function Registry_CachePhase() {
 			//	Third block, directly links ParamBindings to RPaks
 			if (b.dataSource == eParamSource.DATATABLE) {
 				if (b.colName == "") {
-					registry.logger.Fatal( CACHE_ERROR_INFERENCE_FAIL, task.name, b.argName, task.rpakPath )
+					registry.logger.Fatal( "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?", task.name, b.argName, task.rpakPath )
 				}
 
 				fromTable.append(b)
@@ -1025,8 +1026,7 @@ void function Registry_CachePhase() {
 	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
 		//		Sanity checks
 		//	Can't retrieve from something that's not cached
-		asset rpakPath = task.rpakPath
-		if (!(rpakPath in registry.rpakBindings)) { continue }
+		if (!(task.rpakPath in registry.rpakBindings)) { continue }
 
 		//	Can't do shit without bindings
 		array<ParamBinding> bindings = registry.rpakBindings[task.rpakPath]
@@ -1035,8 +1035,8 @@ void function Registry_CachePhase() {
 
 		//	[A] Cache Hit
 		//	Link b.value to the cache - huge time saver
-		if (rpakPath in registry.cache) {
-			RPakData rpak = registry.cache[rpakPath]
+		if (task.rpakPath in registry.cache) {
+			RPakData rpak = registry.cache[task.rpakPath]
 			foreach ( ParamBinding b in bindings ) {
 				if ( b.value == null && b.colName in rpak.data ) {
 					b.value = rpak.data[ b.colName ]
@@ -1048,7 +1048,7 @@ void function Registry_CachePhase() {
 
 		//	[B] Cache Miss
 		//	Access data from disk
-		var dt = GetDataTable(rpakPath)
+		var dt = GetDataTable(task.rpakPath)
 		int numRows = GetDatatableRowCount(dt)
 
 		//	Access bindings
@@ -1066,7 +1066,7 @@ void function Registry_CachePhase() {
 			//	Fetch numeric index for column, throw error if not found
 			int colIdx = GetDataTableColumnByName( dt, b.colName )
 			if (colIdx == -1) {
-				registry.logger.Fatal(CACHE_ERROR_NO_COLUMN, task.name, rpakPath, b.colName )
+				registry.logger.Fatal("Task '%s' requested %s#\"%s\" which does not exist", task.name, task.rpakPath, b.colName )
 			}
 
 			//	Index into colsToFetch
@@ -1112,8 +1112,8 @@ void function Registry_CachePhase() {
 		}
 
 		//		Save to central state
-		registry.cache[rpakPath] <- rpak
-		registry.logger.Info( CACHE_INFO_CACHED, task.name, rpakPath, numRows )
+		registry.cache[task.rpakPath] <- rpak
+		registry.logger.Info( "Task '%s' cached RPak %s (%d rows)", task.name, task.rpakPath, numRows )
 	}
 
 	//		Clear queues
@@ -1121,201 +1121,224 @@ void function Registry_CachePhase() {
 }
 
 void function Registry_PatchPhase() {
-	//	Verify mutator bindings independently, seperate from mutate processing.
-	//	Individual mutations won't use all bindings assigned to a single job.
-	foreach ( int jobID, array<ParamBinding> bindings in registry.mut8Bindings) {
+	registry.logger.SetPhase("PATCH")
+
+	//	Processing functions
+
+	//		1).	Verification
+	//	Verify patch bindings independently, seperate from patch application
+	//	Individual patches won't use all bindings assigned to a single job.
+	foreach (TaskOrdered task in registry.queuePatchAllTasks) {
+		//		Retrieve bindings based on task type
+		//	Switching the source table allows for one inclusion check
+		table< string, array<ParamBinding> > srcTable
+		switch (task.taskType) {
+			case eTaskType.MUTATOR:		srcTable = registry.mutBindings; break;
+			case eTaskType.GENERATOR:	srcTable = registry.genBindings; break;
+			default:
+				registry.logger.Warn("Task '%s' in registry.queuePatchAllTasks is unpermitted type", task.name)
+				break;
+		}
+
+		//	Grab the bindings
+		array<ParamBinding> taskBindings
+		if(!(task.name in srcTable)) {
+			registry.logger.Warn("Task '%s' could not be found in the registry", task.name)
+			continue
+		} else { taskBindings = srcTable[task.name]; }
+		/* ... some sanity checks here ... */
+
+		//		Gather execution context
+		//	Row count is necessary for iteration later
 		int numRows = 0
-		foreach (ParamBinding b in bindings) {
+		foreach (ParamBinding b in taskBindings) {
 			if (b.dataSource == eParamSource.DATATABLE && b.value != null) {
 				numRows = (expect array(b.value)).len()
 				break
 			}
 		}
 
-		string logStr = ""
-		foreach (ParamBinding b in bindings) {
+		//		Validate bindings
+		//	Ensure the binding values are non-null, unless generated
+		foreach (ParamBinding b in taskBindings) {
+			//	Log the active parameter
+			registry.logger.Iter(b.argName)
+
+			//	Validate value state before calling with parameters
+			if (b.dataSource == eParamSource.DATATABLE && b.value == null) {
+				registry.logger.Fatal("Patch '%s' argument '%s' has unresolved data binding.", task.name, b.argName)
+			}
+
+			//	Validate function getter
+			if (b.Get == null) {
+				registry.logger.Fatal("Patch '%s' aborted: Getter for argument '%s' resolved to null.", task.name, b.argName)
+			}
+		}
+
+		registry.logger.Info("Patch '%s' bindings validated", task.name)
+	}
+
+	//		2).	Data Initialization
+	foreach (TaskOrdered task in registry.queuePatchAllTasks) {
+		//		Retrieve bindings based on task type
+		//	Switching the source table allows for one inclusion check
+		table< string, array<ParamBinding> > srcTable
+		switch (task.taskType) {
+			case eTaskType.MUTATOR:		srcTable = registry.mutBindings; break;
+			case eTaskType.GENERATOR:	srcTable = registry.genBindings; break;
+			default: continue;
+		}
+
+		//	Grab the bindings
+		if(!(task.name in srcTable)) { continue }
+		array<ParamBinding> taskBindings = srcTable[task.name]
+
+		//		;dkfjgha;dskrjg
+		//	Reflect function info
+		TaskInfer_Blueprint bp = Registry_ReflectFunc( task.target )
+
+		//	Map task bindings to arg names for O(1) matching against function
+		table<string, ParamBinding> mapBindings = {}
+		foreach (ParamBinding b in taskBindings) { mapBindings[b.argName] <- b }
+
+		//		Grab task-specific context
+		//	Isolate only the active bindings required by the function
+		array<ParamBinding> funcBindings = []
+		foreach (string argName in bp.rawArgs) {
+			if (!(argName in mapBindings)) {
+				registry.logger.Fatal( "Mutator '%s' missing data binding for requested mutator param '%s'", task.name, argName )
+			}
+			funcBindings.append(mapBindings[argName])
+		}
+
+		//	Determine grid depth
+		int numRows = 0
+		foreach (ParamBinding b in taskBindings) {
+			if (b.dataSource == eParamSource.DATATABLE && b.value != null) {
+				numRows = (expect array(b.value)).len()
+				break
+			}
+		}
+
+		//	Construct internal data
+		task.taskBindings = taskBindings
+		task.funcBindings = funcBindings
+		task.numRows = numRows
+		task.i = {
+			taskBindings	= taskBindings,
+			funcBindings	= funcBindings,
+			numRows			= numRows
+		}
+
+		//		Apply mutator/generator
+		//	Generator initialization
+		foreach (ParamBinding b in taskBindings) {
 			if (b.dataSource == eParamSource.GENERATED && b.value == null && numRows > 0) {
 				b.value = []
 				b.value.resize(numRows, null)
 			}
-
-			//	Validate value state before calling with parameters
-			if (b.dataSource == eParamSource.DATATABLE && b.value == null) {
-				printt("REGISTRY [MUT8]: ERROR: Job " + jobID + " | Log: [" + logStr + "]")
-				throw "REGISTRY [MUT8]: ERROR: Job " + jobID + " param '" + b.argName + "' has unresolved data binding."
-			}
-
-			if (b.Get == null) {
-				throw "REGISTRY [MUT8]: ERROR: Job " + jobID +
-					" aborted: Getter for parameter '" +
-					b.argName + "' resolved to null."
-			}
-
-			logStr += b.argName + ", "
 		}
-		printt( "REGISTRY [MUT8]: Validated job " + jobID + " mutator bindings: (" + logStr + ")" )
 	}
 
-	foreach ( TaskPatchModify task in registry.queuePatchModify ) {
-		if (!(task.jobID in registry.mut8Bindings)) { continue; }
+	//		3).	Application
+	foreach (TaskOrdered task in registry.queuePatchAllTasks) {
+		//		Sanity checks
+		//	Skip tasks which haven't had their data filled out
+		// if (typeof(task.i) != "table") {
+		//     continue;
+		// }
 
-		//	Get function information - name, arguments, defaults
-		local infos = task.target.getinfos()
-
-		array params = expect array(infos.parameters); array rawArgs = []
-		foreach( a in params ) { rawArgs.append(expect string(a)); }
-		if (rawArgs.len() > 0 && rawArgs[0] == "this") { rawArgs.remove(0) }
-
-		//	ijhg;sdlfkgj;d
-		array<ParamBinding> jobBindings = registry.mut8Bindings[ task.jobID ]
-
-		table<string, ParamBinding> mapBindings = {}
-		foreach (ParamBinding b in jobBindings) { mapBindings[b.argName] <- b }
-
-		array<ParamBinding> mutBindings = []
-		foreach (string argName in rawArgs) {
-			if (!(argName in mapBindings)) { throw "REGISTRY [MUT8]: ERROR: Job " + task.jobID +
-				" missing data binding for requested mutator param '" + argName + "'"
-			}
-			mutBindings.append(mapBindings[argName])
-		}
-
-		//		Handle jobs w/o data, log the current mutator
-		int numRows = 0
-		string logStr = ""
-		foreach (ParamBinding b in mutBindings) {
-			if (b.value == null) { logStr += b.argName + ": null, "; continue; }
-			numRows = (numRows == 0) ? (expect array( b.value )).len() : numRows
-			logStr += b.argName + ": " + typeof( b.value ) + ", "
-		}
-
-		//	If a job has no rows (no data), log it and skip
-		if (numRows == 0) {
-			printt( "REGISTRY [MUT8]: Job " + task.jobID + " mutator has no data, skipping" )
+		//	Mutator specific exit: abort if no data exists
+		int numRows = task.numRows
+		if (task.taskType == eTaskType.MUTATOR && numRows == 0) {
+			registry.logger.Info( "Mutator '%s' has no data, skipping", task.name )
 			continue
-		} else {
-			printt( "REGISTRY [MUT8]: Executing job " + task.jobID + " | Mutating: (" + logStr + ")" )
-		}	//*/
+		}
 
-		//	TODO: This doesn't work because not every mutator uses every binding
-		//	Convert to an inference from the mutator function args
-		for (int r = 0; r < numRows; r++) {
+		//		Retrieve data
+		array<ParamBinding> taskBindings = task.taskBindings
+		array<ParamBinding> funcBindings = task.funcBindings
+
+		table< string, array > newOutputs = {}
+		foreach (ParamBinding b in taskBindings) {
+			if (b.dataSource == eParamSource.GENERATED && b.value == null && numRows > 0) {
+				b.value = []
+				b.value.resize(numRows, null)
+			}
+			if (task.taskType == eTaskType.GENERATOR) {
+				newOutputs[b.argName] <- []
+			}
+		}
+
+		//		Execution loop
+		//	Generators with 0 rows execute exactly once. Otherwise, execute per row.
+		int loopCount = (numRows == 0) ? 1 : numRows
+		for (int r = 0; r < loopCount; r++) {
 			array args = [ getroottable() ]
-
-			//	Get value, skip if indicated
 			bool skipRow = false
-			foreach (ParamBinding b in mutBindings) {
-				var val = b.Get(r)
-				if (typeof(b.value)=="string" && b.value == "PIPELINE_SKIP") { skipRow = true; break; }
-				args.append( val )
-			}
 
-			if (skipRow) { continue; }
-
-			//	Call mutator to get updated data
-			var result = task.target.acall(args)
-			if (result == null || typeof(result) != "table") { throw "REGISTRY [MUT8]: Job " +
-				task.jobID + " row " + r + " returned '" + typeof(result) + "', expected table"
-			}
-
-			//	Modify array contents
-			table resTable = expect table( result )
-			foreach (ParamBinding b in mutBindings) {
-				if ( b.dataSource == eParamSource.DATATABLE || b.dataSource == eParamSource.GENERATED && (b.argName in resTable) ) {
-					(expect array(b.value))[r] = resTable[b.argName]
-				}
-			}
-		}
-	}
-
-	foreach (TaskPatchGenerate task in registry.queuePatchGenerate) {
-		if (!(task.jobID in registry.mut8Bindings)) { continue; }
-
-		//	Get function information - name, arguments, defaults
-		local infos = task.target.getinfos()
-
-		array params = expect array(infos.parameters); array rawArgs = []
-		foreach( a in params ) { rawArgs.append(expect string(a)); }
-		if (rawArgs.len() > 0 && rawArgs[0] == "this") { rawArgs.remove(0) }
-
-		//	ijhg;sdlfkgj;d
-		array<ParamBinding> jobBindings = registry.mut8Bindings[ task.jobID ]
-
-		table<string, ParamBinding> mapBindings = {}
-		foreach (ParamBinding b in jobBindings) { mapBindings[b.argName] <- b }
-
-		array<ParamBinding> genBindings = []
-		foreach (string argName in rawArgs) {
-			if (!(argName in mapBindings)) { throw "REGISTRY [MUT8]: ERROR: Job " + task.jobID +
-				" missing data binding for requested mutator param '" + argName + "'"
-			}
-			genBindings.append(mapBindings[argName])
-		}
-
-		int numRows = 0
-		foreach (ParamBinding b in jobBindings) {
-			if (b.dataSource == eParamSource.DATATABLE && b.value != null) {
-				numRows = (expect array(b.value)).len()
-				break
-			}
-		}
-
-		//	TODO check this code works
-		table<string, array> newOutputs = {}
-		foreach (ParamBinding b in jobBindings) {
-			newOutputs[b.argName] <- []
-		}
-
-		if (numRows == 0) {
-			// Scenario A: Data generation from a blank slate
-			array args = [ getroottable() ]
-			var result = task.target.acall(args)
-			if (result == null || typeof(result) != "array") {
-				throw "REGISTRY [MUT8]: Generator job " + task.jobID + " expected array of tables, got " + typeof(result)
-			}
-
-			foreach (var rowData in expect array(result)) {
-				table resTable = expect table(rowData)
-				foreach (ParamBinding b in jobBindings) {
-					var val = (b.argName in resTable) ? resTable[b.argName] : null
-					newOutputs[b.argName].append(val)
-				}
-			}
-		} else {
-			// Scenario B: Relational cross-join / array multiplication (1-to-N)
-			for (int r = 0; r < numRows; r++) {
-				array args = [ getroottable() ]
-				bool skipRow = false
-
-				foreach (ParamBinding b in genBindings) {
+			//		Fetch runtime arguments
+			//	Includes a skip check
+			if (numRows > 0) {
+				foreach (ParamBinding b in funcBindings) {
 					var val = b.Get(r)
-					if (typeof(b.value) == "string" && b.value == "PIPELINE_SKIP") { skipRow = true; break; }
+					if (typeof(val) == "string" && expect string(val) == "PIPELINE_SKIP") { skipRow = true; break; }
 					args.append(val)
 				}
-				if (skipRow) { continue; }
+				if (skipRow) { continue }
+			}
 
-				var result = task.target.acall(args)
-				if (result == null || typeof(result) != "array") {
-					throw "REGISTRY [MUT8]: Generator Job " + task.jobID + " row " + r + " expected array of tables, got " + typeof(result)
-				}
+			//	Execute shared function call
+			var result = task.target.acall(args)
 
-				foreach (var rowData in expect array(result)) {
-					table resTable = expect table(rowData)
-					foreach (ParamBinding b in jobBindings) {
-						var val = (b.argName in resTable) ? resTable[b.argName] : b.Get(r)
-						newOutputs[b.argName].append(val)
+			//	Process Outputs by Task Type
+			switch (task.taskType) {
+				case eTaskType.MUTATOR:
+					//	Raise fatal error if call fails
+					if (result == null || typeof(result) != "table") {
+						registry.logger.Fatal( "Mutator '%s' row %d returned '%s', expected table", task.name, r, typeof(result) )
 					}
-				}
+
+					//	Mutate existing tracked state in-line
+					table resTable = expect table( result )
+					foreach (ParamBinding b in funcBindings) {
+						if ( b.dataSource == eParamSource.DATATABLE || (b.dataSource == eParamSource.GENERATED && (b.argName in resTable)) ) {
+							(expect array(b.value))[r] = resTable[b.argName]
+						}
+					}
+
+					break;
+				case eTaskType.GENERATOR:
+					//	Raise fatal error if call fails
+					if (result == null || typeof(result) != "table") {
+						if (numRows == 0) { registry.logger.Fatal( "Generator '%s' expected array of tables, got %s", task.name, typeof(result) ) }
+						registry.logger.Fatal( "Generator '%s' row %d expected array of tables, got %s", task.name, r, typeof(result) )
+					}
+
+					//	Append expanded row generations to buffer
+					foreach (var rowData in expect array(result)) {
+						table resTable = expect table(rowData)
+						foreach (ParamBinding b in taskBindings) {
+							var val = (b.argName in resTable) ? resTable[b.argName] : (numRows > 0 ? b.Get(r) : null)
+							newOutputs[b.argName].append(val)
+						}
+					}
+
+					break;
+
+				default: continue;
 			}
 		}
 
-		// Update vector storage layouts
-		foreach (ParamBinding b in jobBindings) { b.value = newOutputs[b.argName] }
+		//	Generator Cleanup: atomically swap pipeline layout references
+		if (task.taskType == eTaskType.GENERATOR) {
+			foreach (ParamBinding b in taskBindings) { b.value = newOutputs[b.argName] }
+		}
 	}
 
 	//		Clear queues
-	registry.queuePatchModify.clear()
-	registry.queuePatchGenerate.clear()
+	registry.queuePatchAllTasks.clear()
+//	registry.queuePatchGenerate.clear()
 }
 
 void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
@@ -1323,30 +1346,34 @@ void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 	foreach (TaskBuild_ItemData task in queue) {
 		//		Sanity checks
 		//	Unbound data
-		if ( !(task.jobID in registry.funcBindings) ) { continue }
-
-		//	Uncached data
-		if ( !(task.rpakPath in registry.cache) ) { continue }
+		if ( !(task.name in registry.facBindings) ) { continue }
 
 		//		Extract cached data & function bindings
-		RPakData rpak = registry.cache[task.rpakPath]
-		array<ParamBinding> bindings = registry.funcBindings[task.jobID]
+		array<ParamBinding> bindings = registry.facBindings[task.name]
 		string log = ""
 
 		//		Iterate over table
-		for (int r = 0; r < rpak.numRows; r++) {
+		//	Test validation
+		foreach ( ParamBinding b in bindings ) {
+			if ( b.Get == null ) { registry.logger.Fatal("Mutator '%s' aborted: Getter for argument '%s' resolved to null.", task.name, b.argName) }
+		}
+
+		//	Discover row count
+		int numRows = 0
+		foreach (ParamBinding b in bindings) {
+			if (b.value != null && typeof(b.value) == "array") {
+				numRows = (expect array(b.value)).len(); break;
+			}
+		}
+
+		//	Iterate
+		for (int r = 0; r < numRows; r++) {
 			//	Squirrel '.acall()' always requires the root environment at Index 0
 			array args = [ getroottable() ]
 
 			//	Iterate over bindings
 			bool skipRow = false
 			foreach ( ParamBinding b in bindings ) {
-				if ( b.Get == null ) {
-					throw "REGISTRY [BAKE]: ERROR: Job " + task.jobID +
-						" row " + r + " aborted: Getter for parameter '" +
-						b.argName + "' resolved to null."
-				}
-
 				var val = b.Get(r)
 				if (typeof(val)=="string" && val == "PIPELINE_SKIP") { skipRow = true; break; }
 				args.append(val)
@@ -1544,22 +1571,21 @@ void function InitItems()
 
 	SetupWeaponSkinData()
 
+	// Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData), {
+	// 	ref="itemRef"})
 
-	Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData), {
-		ref="itemRef"})
+	dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+		int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+		bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
+		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-	// 	bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
-	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-	// 	CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
-	// }
+		CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
+	}
 
 	// //////////////////////
 	// PILOT MODS/ATTACHMENTS
@@ -1664,23 +1690,23 @@ void function InitItems()
 	/// //////////////////
 	/// PILOT PASSIVE DATA
 	/// //////////////////
-	Registry_RPakJob( $"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-		ref="passive" })
+	// Registry_RPakJob( $"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
+	// 	ref="passive" })
 
-	// dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef      = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "passive" ) )
-	// 	int itemType        = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-	// 	string name			= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-	// 	string description	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
-	// 	asset image			= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-	// 	bool hidden			= GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-	// 	int cost			= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef      = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "passive" ) )
+		int itemType        = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+		string name			= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+		string description	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+		asset image			= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		bool hidden			= GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+		int cost			= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// 	CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
-	// }
+		CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
+	}
 
 
 	/// //////////////////
@@ -1688,144 +1714,142 @@ void function InitItems()
 	/// //////////////////
 
 	// Suits
-	Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
-		ref="type", itemType=eItemTypes.PILOT_SUIT })
+	// Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
+	// 	ref="type", itemType=eItemTypes.PILOT_SUIT })
 
 
-	// dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
-	// 	asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-	// 	int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
+		asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// 	CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
-	// }
+		CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
+	}
 
 	CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
 
 	//	Executions
-	int jobID = 0
-	var FilterDisabledRef = ArmoryUtils_ClosureBox(table function( string ref ) {
-		return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref }
-	})
+	// int jobID = 0
+	// var FilterDisabledRef = ArmoryUtils_ClosureBox(table function( string ref ) {
+	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref }
+	// })
 
-	jobID = Registry_RPakJob( $"datatable/pilot_executions.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-		itemType=eItemTypes.PILOT_EXECUTION })
-	Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
+	// jobID = Registry_RPakJob( $"datatable/pilot_executions.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
+	// 	itemType=eItemTypes.PILOT_EXECUTION })
+	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
 
-	jobID = Registry_RPakJob( $"datatable/titan_executions.rpak", ArmoryUtils_ClosureBox(CreateTitanExecutionData), {
-		reqPrime = [ eColType.BOOL ] })
-	Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
+	// jobID = Registry_RPakJob( $"datatable/titan_executions.rpak", ArmoryUtils_ClosureBox(CreateTitanExecutionData), {
+	// 	reqPrime = [ eColType.BOOL ] })
+	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
 
+	dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+		string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
-	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-	// 	string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
-	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+		if ( IsDisabledRef( ref ) )
+			continue
 
-	// 	if ( IsDisabledRef( ref ) )
-	// 		continue
-
-	// 	CreatePassiveData( i, eItemTypes.PILOT_EXECUTION, hidden, ref, name, description, description, image, cost )
-	// }
+		CreatePassiveData( i, eItemTypes.PILOT_EXECUTION, hidden, ref, name, description, description, image, cost )
+	}
 
 	// ///////////////////
 	// TITAN EXECUTION DATA
 	// ///////////////////
 
-	// dataTable = GetDataTable( $"datatable/titan_executions.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-	// 	if ( hidden == true )
-	// 		continue
+	dataTable = GetDataTable( $"datatable/titan_executions.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+		if ( hidden == true )
+			continue
 
-	// 	string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
-	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-	// 	string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
-	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-	// 	bool reqPrime = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "reqPrime" ) )
+		string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
+		int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+		string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+		bool reqPrime = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "reqPrime" ) )
 
-	// 	if ( IsDisabledRef( ref ) )
-	// 		continue
+		if ( IsDisabledRef( ref ) )
+			continue
 
-	// 	CreateTitanExecutionData( i, itemType, hidden, ref, name, description, description, image, cost, reqPrime )
-	// }
-	// ///////////////////
+		CreateTitanExecutionData( i, itemType, hidden, ref, name, description, description, image, cost, reqPrime )
+	}
 
 	///	========================================
 	///			MP features + playlist
 	///	========================================
-	array<int> featState = [0]
-	var CreateMpFeature = ArmoryUtils_ClosureBox(void function(
-		string featureRef, string featureName, string featureDesc,
-		asset featureIcon, int cost, string specificType
-	) : (featState) {
-		ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, featureRef, featureName, featureDesc, "", featureIcon, cost, false )
-		featureItem.i.specificType <- specificType
-		featState[0]++
-	})
-
-	var CreatePlaylistItem = ArmoryUtils_ClosureBox(void function(
-		string playlist, string name, asset image, int cost
-	) : (featState) {
-		ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, playlist, name, "", "", image, cost, false )
-		featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
-		featureItem.i.isPlaylist <- true
-
-		featState[0]++
-	})
-
-	Registry_RPakJob( $"datatable/features_mp.rpak", CreateMpFeature, {featureIcon = [eColType.ASSET]})
-	Registry_RPakJob( $"datatable/playlist_items.rpak", CreatePlaylistItem, {image = [eColType.ASSET]})
-
-	// dataTable = GetDataTable( $"datatable/features_mp.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// int featureIndex = 0
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
-	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
-	// 	string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
-	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-	// 	string specificType = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "specificType" ) )
-
-	// 	const bool IS_HIDDEN_ARG = false
-	// 	ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+	// array<int> featState = [0]
+	// var CreateMpFeature = ArmoryUtils_ClosureBox(void function(
+	// 	string featureRef, string featureName, string featureDesc,
+	// 	asset featureIcon, int cost, string specificType
+	// ) : (featState) {
+	// 	ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, featureRef, featureName, featureDesc, "", featureIcon, cost, false )
 	// 	featureItem.i.specificType <- specificType
+	// 	featState[0]++
+	// })
 
-	// 	featureIndex++
-	// }
-
-	// dataTable = GetDataTable( $"datatable/playlist_items.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string playlistRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "playlist" ) )
-	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-	// 	const bool IS_HIDDEN_ARG = false
-	// 	ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, playlistRef, name, "", "", image, cost, IS_HIDDEN_ARG )
+	// var CreatePlaylistItem = ArmoryUtils_ClosureBox(void function(
+	// 	string playlist, string name, asset image, int cost
+	// ) : (featState) {
+	// 	ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, playlist, name, "", "", image, cost, false )
 	// 	featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
 	// 	featureItem.i.isPlaylist <- true
 
-	// 	featureIndex++
-	// }
+	// 	featState[0]++
+	// })
+
+	// Registry_RPakJob( $"datatable/features_mp.rpak", CreateMpFeature, {featureIcon = [eColType.ASSET]})
+	// Registry_RPakJob( $"datatable/playlist_items.rpak", CreatePlaylistItem, {image = [eColType.ASSET]})
+
+	dataTable = GetDataTable( $"datatable/features_mp.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	int featureIndex = 0
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
+		string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
+		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+		string specificType = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "specificType" ) )
+
+		const bool IS_HIDDEN_ARG = false
+		ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+		featureItem.i.specificType <- specificType
+
+		featureIndex++
+	}
+
+	dataTable = GetDataTable( $"datatable/playlist_items.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string playlistRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "playlist" ) )
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+		const bool IS_HIDDEN_ARG = false
+		ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, playlistRef, name, "", "", image, cost, IS_HIDDEN_ARG )
+		featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
+		featureItem.i.isPlaylist <- true
+
+		featureIndex++
+	}
 
 	// {
 	// 	int featureIndex = 0
@@ -1839,7 +1863,7 @@ void function InitItems()
 	// 			string desc = GameMode_GetDesc( gameModeRef )
 	// 			asset image = GameMode_GetIcon( gameModeRef )
 	// 			int cost = 0
-	//
+//
 	// 			CreateGenericItem( featureIndex, eItemTypes.GAME_MODE, gameModeRef, name, desc, "", image, cost )
 	// 			featureIndex++
 	// 		}
@@ -1890,37 +1914,37 @@ void function InitItems()
 	// ///////////////////
 	// FACTION DATA # NOT THIS
 	// ///////////////////
-	var CreateFaction = ArmoryUtils_ClosureBox(void function(
-		int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
-	) {
-		ItemData item = CreateBaseItemData( eItemTypes.FACTION, persistenceRef, false )
-		item.name = factionName
+	// var CreateFaction = ArmoryUtils_ClosureBox(void function(
+	// 	int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
+	// ) {
+	// 	ItemData item = CreateBaseItemData( eItemTypes.FACTION, persistenceRef, false )
+	// 	item.name = factionName
 
-		item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
-		item.image = logo
-		item.cost = cost
-
-		item.persistenceId = dataTableIndex
-	})
-	Registry_RPakJob( $"datatable/faction_leaders.rpak", CreateFaction, {
-		logo = [ eColType.ASSET ] })
-
-	// dataTable = GetDataTable( $"datatable/faction_leaders.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string factionRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "persistenceRef" ) )
-	// 	asset logo = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "logo" ) )
-	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "factionName" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-	// 	ItemData item = CreateBaseItemData( eItemTypes.FACTION, factionRef, false )
-	// 	item.image = logo
-	// 	item.name = name
-	// 	item.cost = cost
 	// 	item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
-	// 	item.persistenceId = i
-	// }
+	// 	item.image = logo
+	// 	item.cost = cost
+
+	// 	item.persistenceId = dataTableIndex
+	// })
+	// Registry_RPakJob( $"datatable/faction_leaders.rpak", CreateFaction, {
+	// 	logo = [ eColType.ASSET ] })
+
+	dataTable = GetDataTable( $"datatable/faction_leaders.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string factionRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "persistenceRef" ) )
+		asset logo = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "logo" ) )
+		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "factionName" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+		ItemData item = CreateBaseItemData( eItemTypes.FACTION, factionRef, false )
+		item.image = logo
+		item.name = name
+		item.cost = cost
+		item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
+		item.persistenceId = i
+	}
 
 	// ///////////////
 	// TITAN MOD DATA
@@ -1999,95 +2023,94 @@ void function InitItems()
 	// ///////////////////
 	// TITAN OS DATA
 	// ///////////////////
-	Registry_RPakJob( $"datatable/titan_voices.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
-		ref = TITAN_VOICE_COLUMN, name = TITAN_VOICE_NAME_COLUMN,
-		itemType = eItemTypes.TITAN_OS, cost = 0, isHidden = false
-	})
+	// Registry_RPakJob( $"datatable/titan_voices.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
+	// 	ref = TITAN_VOICE_COLUMN, name = TITAN_VOICE_NAME_COLUMN,
+	// 	itemType = eItemTypes.TITAN_OS, cost = 0, isHidden = false
+	// })
 
-	// dataTable = GetDataTable( $"datatable/titan_voices.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef = GetDataTableString( dataTable, i, TITAN_VOICE_COLUMN )
-	// 	string name = GetDataTableString( dataTable, i, TITAN_VOICE_NAME_COLUMN )
-	// 	string description = GetDataTableString( dataTable, i, TITAN_VOICE_DESCRIPTION_COLUMN )
-	// 	asset image = GetDataTableAsset( dataTable, i, TITAN_VOICE_IMAGE_COLUMN )
-	// 	bool hidden = GetDataTableBool( dataTable, i, TITAN_VOICE_HIDDEN_COLUMN )
+	dataTable = GetDataTable( $"datatable/titan_voices.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef = GetDataTableString( dataTable, i, TITAN_VOICE_COLUMN )
+		string name = GetDataTableString( dataTable, i, TITAN_VOICE_NAME_COLUMN )
+		string description = GetDataTableString( dataTable, i, TITAN_VOICE_DESCRIPTION_COLUMN )
+		asset image = GetDataTableAsset( dataTable, i, TITAN_VOICE_IMAGE_COLUMN )
+		bool hidden = GetDataTableBool( dataTable, i, TITAN_VOICE_HIDDEN_COLUMN )
 
-	// 	const bool IS_HIDDEN_ARG = false
-	// 	CreateGenericItem( i, eItemTypes.TITAN_OS, itemRef, name, description, description, image, 0, IS_HIDDEN_ARG )
-	// }
+		const bool IS_HIDDEN_ARG = false
+		CreateGenericItem( i, eItemTypes.TITAN_OS, itemRef, name, description, description, image, 0, IS_HIDDEN_ARG )
+	}
 
+	// var BakeTitan = ArmoryUtils_ClosureBox(void function(
+	// 	int dataTableIndex, string titanRef, int cost, asset image, asset coreIcon, string name, string desc, string propertiesDesc,
+	// 	int speedDisplay, int healthDisplay, int damageDisplay, int dashDisplay, int titanExecution,
+	// 	int passive1Type, int passive2Type, int passive3Type, int passive4Type, int passive5Type, int passive6Type
+	// ) {
+	// 	ItemData item = CreateBaseItemData( eItemTypes.TITAN, titanRef, false )
+	// 	item.name = name; item.desc = desc; item.longdesc = propertiesDesc;
+	// 	item.image = image; item.imageAtlas = IMAGE_ATLAS_HUD; item.cost = cost;
 
-	var BakeTitan = ArmoryUtils_ClosureBox(void function(
-		int dataTableIndex, string titanRef, int cost, asset image, asset coreIcon, string name, string desc, string propertiesDesc,
-		int speedDisplay, int healthDisplay, int damageDisplay, int dashDisplay, int titanExecution,
-		int passive1Type, int passive2Type, int passive3Type, int passive4Type, int passive5Type, int passive6Type
-	) {
-		ItemData item = CreateBaseItemData( eItemTypes.TITAN, titanRef, false )
-		item.name = name; item.desc = desc; item.longdesc = propertiesDesc;
-		item.image = image; item.imageAtlas = IMAGE_ATLAS_HUD; item.cost = cost;
+	// 	// Shorthand injection to populate item.i
+	// 	table i = {
+	// 		coreIcon = coreIcon, statSpeed = speedDisplay, statHealth = healthDisplay,
+	// 		statDamage = damageDisplay, statDash = dashDisplay, titanExecution = titanExecution,
+	// 		passive1Type = passive1Type, passive2Type = passive2Type, passive3Type = passive3Type,
+	// 		passive4Type = passive4Type, passive5Type = passive5Type, passive6Type = passive6Type
+	// 	}
+	// 	foreach ( k, v in i ) { item.i[k] <- v }
 
-		// Shorthand injection to populate item.i
-		table i = {
-			coreIcon = coreIcon, statSpeed = speedDisplay, statHealth = healthDisplay,
-			statDamage = damageDisplay, statDash = dashDisplay, titanExecution = titanExecution,
-			passive1Type = passive1Type, passive2Type = passive2Type, passive3Type = passive3Type,
-			passive4Type = passive4Type, passive5Type = passive5Type, passive6Type = passive6Type
-		}
-		foreach ( k, v in i ) { item.i[k] <- v }
+	// 	item.persistenceStruct = "titanChassis[" + dataTableIndex + "]"
+	// 	item.persistenceId = dataTableIndex
+	// })
 
-		item.persistenceStruct = "titanChassis[" + dataTableIndex + "]"
-		item.persistenceId = dataTableIndex
-	})
+	// var ResolveTitanSettings = ArmoryUtils_ClosureBox(table function(
+	// 	string setFile, string primeSetFile, string desc,
+	// 	int speedDisplay, int healthDisplay, int damageDisplay, int dashDisplay
+	// ) {
+	// 	#if SERVER || CLIENT
+	// 	PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
+	// 	PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
+	// 	if ( primeSetFile != "" ) {
+	// 		PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
+	// 		PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
+	// 	}
+	// 	#endif
 
-	var ResolveTitanSettings = ArmoryUtils_ClosureBox(table function(
-		string setFile, string primeSetFile, string desc,
-		int speedDisplay, int healthDisplay, int damageDisplay, int dashDisplay
-	) {
-		#if SERVER || CLIENT
-		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
-		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
-		if ( primeSetFile != "" ) {
-			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
-			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
-		}
-		#endif
+	// 	table res = {
+	// 		name = expect string( GetPlayerSettingsFieldForClassName( setFile, "printname" ) ),
+	// 		desc = expect string( GetPlayerSettingsFieldForClassName( setFile, "description" ) ),
+	// 		titanExecution = GetTitanLoadoutPropertyExecutionType( setFile, "titanExecution" )
+	// 	}
 
-		table res = {
-			name = expect string( GetPlayerSettingsFieldForClassName( setFile, "printname" ) ),
-			desc = expect string( GetPlayerSettingsFieldForClassName( setFile, "description" ) ),
-			titanExecution = GetTitanLoadoutPropertyExecutionType( setFile, "titanExecution" )
-		}
+	// 	for ( int i = 1; i <= 6; i++ ) {
+	// 		res["passive" + i + "Type"] <- GetTitanLoadoutPropertyPassiveType( setFile, "passive" + i )
+	// 	}
 
-		for ( int i = 1; i <= 6; i++ ) {
-			res["passive" + i + "Type"] <- GetTitanLoadoutPropertyPassiveType( setFile, "passive" + i )
-		}
+	// 	return res
+	// })
 
-		return res
-	})
+	// // Note the use of eParamSource.GENERATED to safely allocate RAM for these injected stats
+	// int titanJobID = Registry_RPakJob( $"datatable/titans_mp.rpak", BakeTitan, {
+	// 	name = [ eColType.STRING, "", eParamSource.GENERATED ], desc = [ eColType.STRING, "", eParamSource.GENERATED ], propertiesDesc = [ eColType.STRING, "desc", eParamSource.GENERATED ],
 
-	// Note the use of eParamSource.GENERATED to safely allocate RAM for these injected stats
-	int titanJobID = Registry_RPakJob( $"datatable/titans_mp.rpak", BakeTitan, {
-		name = [ eColType.STRING, "", eParamSource.GENERATED ], desc = [ eColType.STRING, "", eParamSource.GENERATED ], propertiesDesc = [ eColType.STRING, "desc", eParamSource.GENERATED ],
+	// 	titanExecution = [ eColType.INT, "", eParamSource.GENERATED ],
+	// 	speedDisplay = [ eColType.INT, "", eParamSource.GENERATED ], healthDisplay = [ eColType.INT, "", eParamSource.GENERATED ], damageDisplay = [ eColType.INT, "", eParamSource.GENERATED ], dashDisplay = [ eColType.INT, "", eParamSource.GENERATED ],
+	// 	passive1Type = [ eColType.INT, "", eParamSource.GENERATED ], passive2Type = [ eColType.INT, "", eParamSource.GENERATED ], passive3Type = [ eColType.INT, "", eParamSource.GENERATED ],
+	// 	passive4Type = [ eColType.INT, "", eParamSource.GENERATED ], passive5Type = [ eColType.INT, "", eParamSource.GENERATED ], passive6Type = [ eColType.INT, "", eParamSource.GENERATED ]
+	// })
 
-		titanExecution = [ eColType.INT, "", eParamSource.GENERATED ],
-		speedDisplay = [ eColType.INT, "", eParamSource.GENERATED ], healthDisplay = [ eColType.INT, "", eParamSource.GENERATED ], damageDisplay = [ eColType.INT, "", eParamSource.GENERATED ], dashDisplay = [ eColType.INT, "", eParamSource.GENERATED ],
-		passive1Type = [ eColType.INT, "", eParamSource.GENERATED ], passive2Type = [ eColType.INT, "", eParamSource.GENERATED ], passive3Type = [ eColType.INT, "", eParamSource.GENERATED ],
-		passive4Type = [ eColType.INT, "", eParamSource.GENERATED ], passive5Type = [ eColType.INT, "", eParamSource.GENERATED ], passive6Type = [ eColType.INT, "", eParamSource.GENERATED ]
-	})
+	// Registry_ModifyJob( titanJobID, 0, FilterDisabledRef, { ref = "titanRef" } )
+	// Registry_ModifyJob( titanJobID, 1, ResolveTitanSettings, {
+	// 	[$"datatable/titan_properties.rpak"] = [
+	// 		"setFile", "primeSetFile", "desc", "speedDisplay",
+	// 		"healthDisplay", "damageDisplay", "dashDisplay"
+	// 	]
+	// })
 
-	Registry_ModifyJob( titanJobID, 0, FilterDisabledRef, { ref = "titanRef" } )
-	Registry_ModifyJob( titanJobID, 1, ResolveTitanSettings, {
-		[$"datatable/titan_properties.rpak"] = [
-			"setFile", "primeSetFile", "desc", "speedDisplay",
-			"healthDisplay", "damageDisplay", "dashDisplay"
-		]
-	})
+	// Registry_ExecutePipeline()
 
-	Registry_ExecutePipeline()
-
-	/*
+	//*
 	var titanPropertiesDataTable = GetDataTable( $"datatable/titan_properties.rpak" )
 	var titansMpDataTable = GetDataTable( $"datatable/titans_mp.rpak" )
 	numRows = GetDatatableRowCount( titansMpDataTable )
@@ -2390,21 +2413,21 @@ void function InitItems()
 		CreateGenericItem( datatableIndex, eItemTypes.BURN_METER_REWARD, ref, name, name, name, image, cost, hidden )
 	}) //*/
 
-	jobID = Registry_RPakJob($"datatable/burn_meter_rewards.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
-		ref = BURN_REF_COLUMN_NAME, itemType = eItemTypes.BURN_METER_REWARD, name = BURN_NAME_COLUMN_NAME,
-		desc = BURN_NAME_COLUMN_NAME, isHidden = [eColType.BOOL, "selectable"] })
-	Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = BURN_REF_COLUMN_NAME})
+	// jobID = Registry_RPakJob($"datatable/burn_meter_rewards.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
+	// 	ref = BURN_REF_COLUMN_NAME, itemType = eItemTypes.BURN_METER_REWARD, name = BURN_NAME_COLUMN_NAME,
+	// 	desc = BURN_NAME_COLUMN_NAME, isHidden = [eColType.BOOL, "selectable"] })
+	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = BURN_REF_COLUMN_NAME})
 
-	var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
-	Registry_ModifyJob( jobID, 0, InvertHidden, {hidden = "selectable"})
+	// var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
+	// Registry_ModifyJob( jobID, 0, InvertHidden, {hidden = "selectable"})
 
-	#if SERVER || CLIENT
-	var ModelPrecache = ArmoryUtils_ClosureBox(table function(asset model) { PrecacheModel( model ); return {} })
-	table rpak2args = {}; rpak2args[$"datatable/burn_meter_rewards.rpak"] <- ["model"]
-	Registry_ModifyJob( jobID, 0, ModelPrecache, rpak2args)
-	#endif
+	// #if SERVER || CLIENT
+	// var ModelPrecache = ArmoryUtils_ClosureBox(table function(asset model) { PrecacheModel( model ); return {} })
+	// table rpak2args = {}; rpak2args[$"datatable/burn_meter_rewards.rpak"] <- ["model"]
+	// Registry_ModifyJob( jobID, 0, ModelPrecache, rpak2args)
+	// #endif
 
-	/*
+	//*
 	dataTable = GetDataTable( $"datatable/burn_meter_rewards.rpak" )
 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
 	{

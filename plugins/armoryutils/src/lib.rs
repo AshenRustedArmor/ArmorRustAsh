@@ -4,16 +4,17 @@ use rrplug::prelude::*;
 
 //	modules
 mod closures;
+mod toposort;
 
 //		Macros
 //	This macro allows multiple
 #[macro_export]
 macro_rules! register_multi {
-    ($($func:path),* $(,)?) => {
-        $(
-            rrplug::register_sq_functions!($func);
-        )*
-    }
+	($($func:path),* $(,)?) => {
+		$(
+			rrplug::prelude::register_sq_functions($func);
+		)*
+	}
 }
 
 //		Functionality
@@ -30,7 +31,8 @@ impl Plugin for ArmoryUtilsPlugin {
 	fn new(_reloaded: bool) -> Self {
 		log::info!("[ArmoryUtils] Utility plugin initialized!");
 
-		closures::register_funcs();
+		closures::register();
+		toposort::register();
 		//register_sq_functions(closure_box);
 
 		Self {}
