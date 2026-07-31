@@ -1,216 +1,260 @@
 untyped
-//		Declaration
-//	Global functions
+
 global function ArmoryUtils_CreateLogger
 
-global function LogPhase
-global function LogPush
-global function LogFormat
-
-global function LogIter
-global function LogDebug
-global function LogInfo
-global function LogWarn
-global function LogError
-global function LogFatal
-
-//	Logger state structs
-global struct LoggerConfigFormat {
-	int paddingPrefix = 4
-	int paddingPhase  = 7
-	int paddingLevel  = 7
-
-	int justifyPrefix = 1
-	int justifyPhase = -1
-	int justifyLevel = -1
-
-	string vertChar = "|"
-	string horzChar = "-"
-	string bothChar = "+"
-}
-
-global struct LoggerConfigStatus {
-	bool breakPhase = true
-	bool breakLevel = false
-
-	string prefixPhase = "#"
-	string prefixLevel = ">"
-}
-
-global struct LoggerConfigIter {
-	string brackets	= "[%s]"
-	string separator = ", "
-	string missing = "~"
-}
-
-global struct LoggerState {
-	string currPhase = "INIT"
-	int printIndex = 0
-
-	array<string> colPhase
-	array<string> colLevel
-	array<string> colText
-
-	LoggerConfigFormat	cfgFormat
-	LoggerConfigStatus	cfgStatus
-	LoggerConfigIter	cfgIter
-}
-
 /// ===========================================================================
-///                     		HELPER FUNCTIONS
+///					 Helper functions - file scope
 /// ===========================================================================
-//	Repeats the string 'rep' 'count' times.
-string function _RepeatString( string rep, int count ) {
+string function _RepeatString( string char, int count ) {
 	string out = ""
-	for (int i = 0; i < count; i++) { out += rep }
+	for (int i = 0; i < count; i++) { out += char }
 	return out
 }
 
-//	Refactor of the 'format' function to accept an array
-string function FormatArray( string fmtStr, array args ) {
+string function _FormatArray( string fmtStr, array args ) {
 	if ( args.len() == 0 ) { return fmtStr }
 
 	array callArgs = [ getroottable(), fmtStr ]
 	callArgs.extend( args )
 
-	return expect string( format.acall( callArgs ) )
+    var out = format.acall( callArgs )
+	return expect string(out)
 }
 
-string function FormatRow( LoggerConfigFormat cfg ) {
-	string alignPrefix	= (cfg.justifyPrefix == -1) ? "-" : ""
-	string alignPhase	= (cfg.justifyPhase == -1) ? "-" : ""
-	string alignLevel	= (cfg.justifyLevel == -1) ? "-" : ""
-
-	return format( "\n%%%s%ds%%s%%%s%ds%%s%%%s%ds%%s%%s\n",
-		alignPrefix, cfg.paddingPrefix,
-		alignPhase,  cfg.paddingPhase,
-		alignLevel,  cfg.paddingLevel
-	)
+/// ===========================================================================
+///					 Internal Logger Functions
+/// ===========================================================================
+void function Logger_SetPhase( string phase ) {
+	this.currPhase = phase
 }
 
-string function DrawBreak( LoggerState state, bool changePhase, bool changeLevel, string rowFmt ) {
-	//	Return null string if
-	bool doPhase = (state.cfgStatus.breakPhase && changePhase)
-	bool doLevel = (state.cfgStatus.breakLevel && changeLevel)
-	if ( !doPhase && !doLevel ) { return "" }
+array<string> function Logger_PushRow( string level, string message ) {
+	array colPhase = expect array(this.colPhase)
+	array colLevel = expect array(this.colLevel)
+	array colText  = expect array(this.colText)
+	string currPhase = expect string(this.currPhase)
 
-	string activePrefix = state.cfgStatus.prefixLevel
-	if (changePhase) { activePrefix = state.cfgStatus.prefixPhase }
+	colPhase.append( currPhase )
+	colLevel.append( level )
+	colText.append( message )
 
-	int padPhase = state.cfgFormat.paddingPhase
-	int padLevel = state.cfgFormat.paddingLevel
-	int contentWidth = 80 - (state.cfgFormat.paddingPrefix + padPhase + padLevel + 6)
-	if ( contentWidth < 10 ) { contentWidth = 10 }
-
-	string charHorz = state.cfgFormat.horzChar
-	string charBoth = state.cfgFormat.bothChar
-
-	return format( rowFmt,
-		activePrefix, charBoth,
-		_RepeatString(charHorz, padPhase), charBoth,
-		_RepeatString(charHorz, padLevel), charBoth,
-		_RepeatString(charHorz, contentWidth)
-	)
+	return [ currPhase, level, message ]
 }
 
-string function DrawRow( LoggerState state, int idx, string rowFmt ) {
-	string currPhase = state.colPhase[idx]
-	string currLevel = state.colLevel[idx]
-	string currText  = state.colText[idx]
+string function Logger_Format() {
+	array colPhase = expect array(this.colPhase)
+	array colLevel = expect array(this.colLevel)
+	array colText  = expect array(this.colText)
+	int printIndex = expect int(this.printIndex)
 
-	bool changePhase = false
-	bool changeLevel = false
+	if ( printIndex >= colPhase.len() ) { return ""}
 
-	if (idx > 0) {
-		changePhase = (currPhase != state.colPhase[idx-1])
-		changeLevel = (currLevel != state.colLevel[idx-1])
-	}
+	table cfgFmt = expect table(this.configFormat)
+	table cfgStat = expect table(this.configStatus)
 
-	string output = DrawBreak( state, changePhase, changeLevel, rowFmt )
+	// 1. Unbox configurations
+	int padPrefix = expect int(cfgFmt.paddingPrefix)
+	int padPhase  = expect int(cfgFmt.paddingPhase)
+	int padLevel  = expect int(cfgFmt.paddingLevel)
 
-	string dispPhase = currPhase
-	string dispLevel = currLevel
-	if (state.cfgStatus.breakPhase && !changePhase && idx > 0) { dispPhase = "" }
-	if (state.cfgStatus.breakLevel && !changeLevel && idx > 0) { dispLevel = "" }
+	string charHorz = expect string(cfgFmt.horzChar)
+	string charVert = expect string(cfgFmt.vertChar)
+	string charBoth = expect string(cfgFmt.bothChar)
 
-	output += format( rowFmt,
-		"", state.cfgFormat.vertChar,
-		dispPhase, state.cfgFormat.vertChar,
-		dispLevel, state.cfgFormat.vertChar,
-		currText
+	bool breakPhase = expect bool(cfgStat.breakPhase)
+	bool breakLevel = expect bool(cfgStat.breakLevel)
+	string prefixPhase = expect string(cfgStat.prefixPhase)
+	string prefixLevel = expect string(cfgStat.prefixLevel)
+
+	// 2. Build alignment modifiers
+	string alignPrefix = (expect int(cfgFmt.justifyPrefix) == -1) ? "-" : ""
+	string alignPhase  = (expect int(cfgFmt.justifyPhase) == -1) ? "-" : ""
+	string alignLevel  = (expect int(cfgFmt.justifyLevel) == -1) ? "-" : ""
+
+	// 3. Generate dynamic format template
+	string rowFmt = format( "%%%s%ds%%s%%%s%ds%%s%%%s%ds%%s%%s\n",
+		alignPrefix, padPrefix,
+		alignPhase,  padPhase,
+		alignLevel,  padLevel
 	)
 
-	return output
-}
+	// 4. Pre-calculate horizontal line segments
+	int contentWidth = 80 - (padPrefix + padPhase + padLevel + 6)
+	if ( contentWidth < 10 ) contentWidth = 10
 
-///	===========================================================================
-///								LOGGER CONFIGURATION
-///	===========================================================================
-LoggerState function ArmoryUtils_CreateLogger( string initPhase = "INIT" ) {
-	LoggerState state
-	state.currPhase = initPhase
-	return state
-}
+	string linePhase	= _RepeatString(charHorz, padPhase)
+	string lineLevel	= _RepeatString(charHorz, padLevel)
+	string lineContent  = _RepeatString(charHorz, contentWidth)
 
-void function LogPhase( LoggerState state, string phase ) {
-	state.currPhase = phase
-}
-
-///	===========================================================================
-///								INTERNAL FUNCTIONALITY
-///	===========================================================================
-array<string> function LogPush( LoggerState state, string level, string message ) {
-	state.colPhase.append( state.currPhase )
-	state.colLevel.append( level )
-	state.colText.append( message )
-	return [ state.currPhase, level, message ]
-}
-
-string function LogFormat( LoggerState state ) {
-	int maxLen = state.colPhase.len()
-	if ( state.printIndex >= maxLen ) { return "" }
-
-	string rowFmt = FormatRow( state.cfgFormat )
+	// 5. Build output string
 	string output = ""
+	for (; printIndex < colPhase.len(); printIndex++) {
+		var currPhase   = colPhase[printIndex]
+		var currLevel   = colLevel[printIndex]
+		var currText    = colText[printIndex]
 
-	for (; state.printIndex < maxLen; state.printIndex++) {
-		output += DrawRow( state, state.printIndex, rowFmt )
+        bool changePhase = false; bool changeLevel = false
+		if (printIndex > 0) {
+			var prevPhase = colPhase[printIndex-1]; var prevLevel = colLevel[printIndex-1]
+			changePhase = (expect string(currPhase) != expect string(prevPhase))
+			changeLevel = (expect string(currLevel) != expect string(prevLevel))
+		}
+
+		// Draw Boundary Separators
+		if ( (breakPhase && changePhase) || (breakLevel && changeLevel) ) {
+			string activePrefix = changePhase ? prefixPhase : prefixLevel
+			output += format( rowFmt,
+				activePrefix, charBoth,
+				linePhase,	charBoth,
+				lineLevel,	charBoth,
+				lineContent
+			)
+		}
+
+		// Visually deduplicate repeated phases/levels on continuous lines
+		string displayPhase = (breakPhase && !changePhase && printIndex > 0) ? "" : expect string(currPhase)
+		string displayLevel = (breakLevel && !changeLevel && printIndex > 0) ? "" : expect string(currLevel)
+
+		// Append the actual log row
+		output += format( rowFmt,
+			"", charVert,
+			displayPhase, charVert,
+			displayLevel, charVert,
+			expect string(currText)
+		)
 	}
 
+	this.printIndex = printIndex
 	return output
 }
 
-///	===========================================================================
-///								LOGGER FUNCTIONS
-///	===========================================================================
-void function LogIter( LoggerState state, string fmtStr, ... ) {
-	string text = FormatArray( fmtStr, vargv )
-	int lastIdx = state.colText.len() - 1
+/// ===========================================================================
+///					 External Logger Functions
+/// ===========================================================================
+void function Logger_Iter( string fmtStr, ... ) {
+	array args = []
+	for (int i = 0; i < vargc; i++) { args.append(vargv[i]) }
 
-	if (lastIdx < 0 || state.colLevel[lastIdx] != "ITER") {
-		LogPush( state, "ITER", format( state.cfgIter.brackets, text ) )
-		return
+	string text = _FormatArray( fmtStr, args )
+
+	array colText = expect array(this.colText)
+	array colLevel = expect array(this.colLevel)
+	int lastIdx = colText.len() - 1
+
+	table cfgIter = expect table(this.configIter)
+	string brackets = expect string(cfgIter.brackets)
+	string separator = expect string(cfgIter.separator)
+
+	// Start new bracket if empty or previous row wasn't ITER
+	if ( lastIdx < 0 || colLevel[lastIdx] != "ITER" ) {
+		this.Push( "ITER", format( brackets, text ) )
+	} else {
+		// Splice into existing bracket
+		var oldText = colText[lastIdx]
+		string existing = expect string(oldText)
+		string stripped = existing.slice( 0, existing.len() - 1 )
+		colText[lastIdx] = stripped + separator + text + "]"
 	}
-
-	string existing = state.colText[lastIdx]
-	string stripped = existing.slice( 0, existing.len() - 1 )
-	state.colText[lastIdx] = stripped + state.cfgIter.separator + text + "]"
 }
 
-void function LogDebug( LoggerState state, string fmtStr, ... ) {
-	#if DEBUG
-	LogPush( state, "DEBUG", FormatArray(fmtStr, vargv) )
+void function Logger_Debug( string fmtStr, ... ) {
+	#if DEV
+	array args = []
+	for (int i = 0; i < vargc; i++) { args.append(vargv[i]) }
+	this.Push( "DEBUG", _FormatArray(fmtStr, args) )
 	#endif
 }
 
-void function LogInfo( LoggerState state, string fmtStr, ... )  { LogPush( state, "INFO",  FormatArray(fmtStr, vargv) ) }
-void function LogWarn( LoggerState state, string fmtStr, ... )  { LogPush( state, "WARN",  FormatArray(fmtStr, vargv) ) }
-void function LogError( LoggerState state, string fmtStr, ... ) { LogPush( state, "ERROR", FormatArray(fmtStr, vargv) ) }
+void function Logger_Info( string fmtStr, ... )  {
+	array args = []
+	for (int i = 0; i < vargc; i++) { args.append(vargv[i]) }
+	this.Push( "INFO",  _FormatArray(fmtStr, args) )
+}
+void function Logger_Warn( string fmtStr, ... )  {
+	array args = []
+	for (int i = 0; i < vargc; i++) { args.append(vargv[i]) }
+	this.Push( "WARN",  _FormatArray(fmtStr, args) )
+}
+void function Logger_Error( string fmtStr, ... ) {
+	array args = []
+	for (int i = 0; i < vargc; i++) { args.append(vargv[i]) }
+	this.Push( "ERROR", _FormatArray(fmtStr, args) )
+}
 
-void function LogFatal( LoggerState state, string fmtStr, ... ) {
-	string text = FormatArray( fmtStr, vargv )
-	array<string> err = LogPush( state, "FATAL", text )
+void function Logger_Fatal( string fmtStr, ... ) {
+	array args = []
+	for (int i = 0; i < vargc; i++) { args.append(vargv[i]) }
+	string text = _FormatArray( fmtStr, args )
 
-	printt( LogFormat(state) )
-	throw format( "REGISTRY [%s] FATAL: %s", err[0], err[2] )
+	// Unbox safely from a dynamic function call
+	array err = expect array( this.Push( "FATAL", text ) )
+
+	printt( this.Build() ) // Dump everything leading up to the crash
+
+	var errPhase = err[0]; var errText = err[2]
+	throw format("REGISTRY [%s] FATAL: %s", expect string(errPhase), expect string(errText))
+}
+
+/// ===========================================================================
+///							 Logger Factory
+///	 Return a table that imitates functionality of a class instance
+/// ===========================================================================
+table function ArmoryUtils_CreateLogger(
+	string initPhase	= "INIT",
+	table customFormat  = {},
+	table customStatus  = {},
+	table customIter	= {}
+) {
+	//  Initialize table state
+	table logger = {
+		currPhase  = initPhase
+		printIndex = 0
+
+		colPhase = []
+		colLevel = []
+		colText  = []
+
+		configFormat = {
+			paddingPrefix = 2,  justifyPrefix = 1,
+			paddingPhase  = 7,  justifyPhase  = -1,
+			paddingLevel  = 7,  justifyLevel  = -1,
+			vertChar = "| ",	horzChar = "-",	 bothChar = "+"
+		}
+
+		configStatus = {
+			breakPhase = true,  breakLevel = false,
+			prefixPhase = "#",  prefixLevel = ">"
+		}
+
+		configIter = {
+			brackets = "[%s]",  separator = ", ",	missing = "~"
+		}
+	}
+
+	//  Safely merge user configuration
+	foreach (key, val in customFormat) {
+		if (key in logger.configFormat) { logger.configFormat[key] = val }
+	}
+
+	foreach (key, val in customStatus) {
+		if (key in logger.configStatus) { logger.configStatus[key] = val }
+	}
+
+	foreach (key, val in customIter) {
+		if (key in logger.configIter) { logger.configIter[key] = val }
+	}
+
+	//  Bind methods to table
+	logger.SetPhase	<- Logger_SetPhase
+	logger.Push		<- Logger_PushRow
+	logger.Build	<- Logger_Format
+
+	logger.Iter		<- Logger_Iter
+	logger.Debug	<- Logger_Debug
+	logger.Info		<- Logger_Info
+	logger.Warn		<- Logger_Warn
+	logger.Error	<- Logger_Error
+	logger.Fatal	<- Logger_Fatal
+
+	return logger
 }

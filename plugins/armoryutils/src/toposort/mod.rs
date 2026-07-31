@@ -19,10 +19,10 @@ pub struct TopoGraph {
 // ==========================================================
 //  Global state
 static GRAPHS: OnceLock<Mutex<  HashMap<i32, TopoGraph>  >> = OnceLock::new();
-static HANDLE_COUNTER: OnceLock<Mutex<  i32  >> = OnceLock::new();
+static NEXT_ID: OnceLock<Mutex<  i32  >> = OnceLock::new();
 
 pub fn next_handle() -> i32 {
-	let mut counter = HANDLE_COUNTER.get_or_init(|| Mutex::new(0)).lock().unwrap();
+	let mut counter = NEXT_ID.get_or_init(|| Mutex::new(0)).lock().unwrap();
 	let current = *counter;
 	*counter += 1;
 	current

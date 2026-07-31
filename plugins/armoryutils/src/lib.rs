@@ -5,6 +5,7 @@ use rrplug::prelude::*;
 //	modules
 mod closures;
 mod toposort;
+mod logger;
 
 //		Macros
 //	This macro allows multiple

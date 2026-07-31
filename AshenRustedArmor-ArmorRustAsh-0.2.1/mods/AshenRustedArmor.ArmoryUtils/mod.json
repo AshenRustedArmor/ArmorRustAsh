@@ -3,7 +3,7 @@
 	"Description" : "Utility functionality.",
 	"Version": "0.1.1",
 
-	"LoadPriority": 1,
+	"LoadPriority": 0,
 	"RequiredOnClient": true,
 
 	"Localisation": [

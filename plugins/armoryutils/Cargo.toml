@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 name = "armoryutils"
 
 [dependencies]
+dyn-fmt = "0.4.3"
 petgraph = "0.8.3"
 rrplug = "4.3.0"
 serde_json = "1.0.150"
