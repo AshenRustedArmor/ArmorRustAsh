@@ -60,10 +60,13 @@ macro_rules! define_log_level {
 			custom_cols.insert("level".to_string(), $level_str.to_string());
 
 			//  Delegate formatting / row assembly to write.rs.
-			process_log(format, &custom_cols, &msg, &args);
+			let last_msg = process_log(format, &custom_cols, &msg, &args);
 
-			if $level_str == "FATAL" {
-				log::error!("{}", format.dump_cache.join("\n"));
+			match $level_str {
+				"INFO"	=> rrplug::prelude::log::info!("{}", last_msg),
+				"WARN"	=> rrplug::prelude::log::warn!("{}", last_msg),
+				"ERROR"	=> rrplug::prelude::log::error!("{}", format.dump_cache.join("\n")),
+				_		=> rrplug::prelude::log::info!("{}", last_msg),
 			}
 
 			0
@@ -73,8 +76,6 @@ macro_rules! define_log_level {
 
 
 // Generate the FFI functions
-define_log_level!("logger_debug", "ArmoryLog_Debug", "DEBUG");
-define_log_level!("logger_info",  "ArmoryLog_Info",  "INFO");
-define_log_level!("logger_warn",  "ArmoryLog_Warn",  "WARN");
-define_log_level!("logger_error", "ArmoryLog_Error", "ERROR");
-define_log_level!("logger_fatal", "ArmoryLog_Fatal", "FATAL");
+define_log_level!(logger_info,  "ArmoryLog_Info",  "INFO");
+define_log_level!(logger_warn,  "ArmoryLog_Warn",  "WARN");
+define_log_level!(logger_error, "ArmoryLog_Error", "ERROR");

@@ -158,7 +158,7 @@ fn find_position(column_keys: &[String], key: &str) -> Option<usize> {
 
 /// Runs break detection against `format.last_values`, draws a divider row
 /// first if needed, then renders and appends `values` to `dump_cache`.
-fn emit_row(format: &mut LogFormat, values: Vec<String>) {
+fn emit_row(format: &mut LogFormat, values: Vec<String>) -> String {
 	let has_previous_row = !format.dump_cache.is_empty();
 
 	let vert = format.separators.first().map(String::as_str).unwrap_or("");
@@ -178,8 +178,10 @@ fn emit_row(format: &mut LogFormat, values: Vec<String>) {
 		format.dump_cache.push(build_divider(&rendered, vert, horz, cross));
 	}
 
-	format.dump_cache.push(rendered);
+	format.dump_cache.push(rendered.clone());
 	format.last_values = values;
+
+	rendered
 }
 
 //	============================================================================
@@ -191,7 +193,7 @@ fn emit_row(format: &mut LogFormat, values: Vec<String>) {
 /// `format.dump_cache`. If `msg` contains an `%I{sep}` token, it's replaced
 /// with the fragments queued by `Iter` since the last such token was
 /// consumed; otherwise the queue is left untouched for a later call.
-pub fn process_log(format: &mut LogFormat, custom_cols: &HashMap<String, String>, msg: &str, args: &[String]) {
+pub fn process_log(format: &mut LogFormat, custom_cols: &HashMap<String, String>, msg: &str, args: &[String]) -> String {
 	let mut values = if format.last_values.len() == format.column_keys.len() + 1 {
 		format.last_values.clone()
 	} else {
@@ -206,5 +208,5 @@ pub fn process_log(format: &mut LogFormat, custom_cols: &HashMap<String, String>
 
 	values[0] = format_message(msg, args, &mut format.iter_queue);
 
-	emit_row(format, values);
+	emit_row(format, values)
 }

@@ -50,7 +50,12 @@ pub fn get_loggers() -> &'static Mutex<HashMap<i32, LogFormat>> {
 //					FFI function registry
 //	==========================================================
 pub fn register() {
-	/*
+	//*
 	crate::register_multi!(
+		create::logger_create,
+		log::logger_iter,
+		log::logger_info,
+		log::logger_warn,
+		log::logger_error,
 	); // */
 }
