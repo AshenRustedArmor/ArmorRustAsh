@@ -34,6 +34,7 @@ impl Plugin for ArmoryUtilsPlugin {
 
 		closures::register();
 		toposort::register();
+		logger::register();
 		//register_sq_functions(closure_box);
 
 		Self {}
