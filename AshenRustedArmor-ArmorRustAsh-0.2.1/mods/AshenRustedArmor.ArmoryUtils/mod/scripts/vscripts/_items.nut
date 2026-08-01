@@ -433,7 +433,7 @@ struct
 Match:		const string (LOG|ERR|LOG_WARN)_(BIND|CCH|MUT|BAKE)_([\w|_]*?)(?:\s*)=\s"REGISTRY \[.*\]:\s(?:(?:ERROR|WARNING):\s)?(.*?)"
 Replace:	const string $2_$1_$3\t\t\t= "$4"
 
-Match:		const string (BIND|CCH|MUT|BAKE)_LOG(.*?\s\|\s Log:\[\%s\])
+Match:		const string (BIND|CCH|MUT|BAKE)_LOG(.*?\s\|\s Log:\[\{}\])
 Replace:	const string $1_INFO
 */
 
@@ -443,41 +443,62 @@ Replace:	const string $1_INFO
 ///	===========================================================================
 // //		Text definitions
 // //	General
-// const string PHASE_THROW					= "REGISTRY [%s] %s: %s"
-// const string PHASE_DUMP						= "Task '%s' encountered error | Log: $s"	//"[%s]"
+// const string PHASE_THROW					= "REGISTRY [{}] {}: {}"
+// const string PHASE_DUMP						= "Task '{}' encountered error | Log: $s"	//"[{}]"
 
 // //	INFER Phase
 // const string INFER_WARN_NULL				= "b.value != null"
-// const string INFER_INFO_GETTER_SET			= "Setting getters for Task '%s' | Log: $s"	//"[%s]
+// const string INFER_INFO_GETTER_SET			= "Setting getters for Task '{}' | Log: $s"	//"[{}]
 
-// const string INFER_ERROR_OVERRIDE_INV		= "Task '%s' override '%s' invalid: target lacks this param"
-// const string INFER_ERROR_VALUE_NULL			= "Task '%s' crashed, argument '%s' has null value"
+// const string INFER_ERROR_OVERRIDE_INV		= "Task '{}' override '{}' invalid: target lacks this param"
+// const string INFER_ERROR_VALUE_NULL			= "Task '{}' crashed, argument '{}' has null value"
 
 // //	CACHE Phase
-// const string CACHE_MISC_RPAK_INDEX			= "%s#[%s]"
+// const string CACHE_MISC_RPAK_INDEX			= "{}#[{}]"
 
-// const string CACHE_INFO_CACHED				= "Task '%s' cached RPak %s (%d rows)"
-// const string CACHE_ERROR_NO_COLUMN			= "Task '%s' requested %s#\"%s\" which does not exist"
+// const string CACHE_INFO_CACHED				= "Task '{}' cached RPak {} (%d rows)"
+// const string CACHE_ERROR_NO_COLUMN			= "Task '{}' requested {}#\"{}\" which does not exist"
 
-// const string CACHE_ERROR_BAD_TASK			= "Requested task '%s', which does not exist"
-// const string CACHE_ERROR_INFERENCE_FAIL		= "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?"
+// const string CACHE_ERROR_BAD_TASK			= "Requested task '{}', which does not exist"
+// const string CACHE_ERROR_INFERENCE_FAIL		= "Task '{}' argument '{}' cannot be inferred from '{}'. Missing override?"
 
 // //	PATCH Phase
-// const string PATCH_INFO_VALIDATED_BINDS		= "Mutator '%s' bindings validated | Log: $s"	//"[%s]"
-// const string PATCH_INFO_NO_DATA				= "Mutator '%s' has no data, skipping"
+// const string PATCH_INFO_VALIDATED_BINDS		= "Mutator '{}' bindings validated | Log: $s"	//"[{}]"
+// const string PATCH_INFO_NO_DATA				= "Mutator '{}' has no data, skipping"
 
-// const string PATCH_INFO_ERROR				= "Task '%s' | Log: $s"	//"[%s]"
+// const string PATCH_INFO_ERROR				= "Task '{}' | Log: $s"	//"[{}]"
 
-// const string PATCH_ERROR_BIND_UNRESOLVED	= "Mutator '%s' argument '%s' has unresolved data binding."
+// const string PATCH_ERROR_BIND_UNRESOLVED	= "Mutator '{}' argument '{}' has unresolved data binding."
 // const string PATCH_ERROR_GETTER_NULL		=
-// const string PATCH_ERROR_BIND_MISSING		= "Mutator '%s' missing data binding for requested mutator param '%s'"
+// const string PATCH_ERROR_BIND_MISSING		= "Mutator '{}' missing data binding for requested mutator param '{}'"
 
-// const string PATCH_ERROR_EXPECTED_TABLE		= "Mutator '%s' row %d returned '%s', expected table"
-// const string PATCH_ERROR_GEN_EXP_ARRAY		= "Generator '%s' expected array of tables, got %s"
-// const string PATCH_ERROR_GEN_ROW_ARRAY		= "Generator '%s' row %d expected array of tables, got %s"
+// const string PATCH_ERROR_EXPECTED_TABLE		= "Mutator '{}' row %d returned '{}', expected table"
+// const string PATCH_ERROR_GEN_EXP_ARRAY		= "Generator '{}' expected array of tables, got {}"
+// const string PATCH_ERROR_GEN_ROW_ARRAY		= "Generator '{}' row %d expected array of tables, got {}"
 
 // //	BUILD Phase
-// const string BUILD_ERROR_GETTER_NULL		= "Factory '%s' row %d aborted: Getter for argument '%s' resolved to null."
+// const string BUILD_ERROR_GETTER_NULL		= "Factory '{}' row %d aborted: Getter for argument '{}' resolved to null."
+
+void function Logger_Info( string fmtStr, ... )  {
+	array<string> cols = [ "phase", registry.phase ]
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
+	ArmoryLog_Info( registry.logger, cols, fmtStr, args )
+}
+void function Logger_Warn( string fmtStr, ... )  {
+	array<string> cols = [ "phase", registry.phase ]
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
+	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
+}
+void function Logger_Error( string fmtStr, ... ) {
+	array<string> cols = [ "phase", registry.phase ]
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
+	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
+}
+void function Logger_Fatal( string fmtStr, ... ) {
+	array<string> cols = [ "phase", registry.phase ]
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
+	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
+}
 
 ///	===========================================================================
 ///							Data Storage + Handling
@@ -619,7 +640,9 @@ table< string, ParamBinding > inferences = {}
 
 //	Registry
 struct {
-	table logger = {}
+	int logger = -1
+	string phase = "INIT"
+
 	int topoID = -1
 
 	/// === CALLBACKS =========================================================
@@ -670,8 +693,8 @@ struct {
 ///	============================================================================
 void function RegistryPipelineInit() {
 	//		Reset state
-	registry.logger = ArmoryUtils_CreateLogger()
-	registry.logger.SetPhase("INIT")
+	registry.logger = ArmoryLog_Create("{#phase:^7}{m}", "|,-,+")
+	registry.phase = "INIT"
 
 	registry.topoID = ArmoryUtils_TopoCreate()
 
@@ -782,13 +805,13 @@ void function Registry_InferFunction(
 	if (taskName in registry.taskCounter) {
 		taskNum = registry.taskCounter[taskName]
 
-		string prevName = format("%s_%3d", taskName, taskNum-1)
+		string prevName = format("{}_%3d", taskName, taskNum-1)
 		before.append(prevName)
 	} else { registry.taskCounter[taskName] <- taskNum }
 	registry.taskCounter[taskName] ++
 
 	//	Adjust name
-	string currName = format("%s_%3d", taskName, taskNum)
+	string currName = format("{}_%3d", taskName, taskNum)
 
 	//		Register task and dependencies
 	ArmoryUtils_TopoNode( registry.topoID, currName )
@@ -827,14 +850,14 @@ void function Registry_InferRPakData(
 ) {
 	//		Find parameter destination
 	if (!(taskName in registry.taskCounter)) {
-		registry.logger.Warn("Attempted to bind data to unknown task '%s'", taskName)
+		Logger_Warn("Attempted to bind data to unknown task '{}'", taskName)
 		return
 	}
 
 	//	Retrieve tasks bound to this name
 	array<string> taskNames = []
 	for (int i = 0; i < registry.taskCounter[taskName]; i++) {
-		taskNames.append( format("%s_%3d", taskName, i) )
+		taskNames.append( format("{}_%3d", taskName, i) )
 	}
 
 	//		Instantiate tasks
@@ -852,7 +875,7 @@ void function Registry_InferRPakData(
 ///								Task Processing
 ///	============================================================================
 void function Registry_InferPhase() {
-	registry.logger.SetPhase("INFER")
+	registry.phase = "INFER"
 
 	//	Infer bindings from function parameter reflection
 	foreach (TaskInfer_Function task in registry.queueInfer_Function) {
@@ -911,9 +934,9 @@ void function Registry_InferPhase() {
 		//	This was initially done in the Bake phase, but has been moved here
 		//	to allow the Mutate phase to access the Get functions. 'fromFunc'
 		//	contains all bindings, so only this needs to be mapped over.
-		registry.logger.Info( "Setting getters for Task '%s'", task.name)
+		Logger_Info( "Setting getters for Task '{}'", task.name)
 		foreach (ParamBinding b in task.destArray) {
-			registry.logger.Iter( b.argName )	//	Using this function automatically adds to a log line
+			ArmoryLog_Iter(registry.logger, b.argName)	//	Using this function automatically adds to a log line
 
 			switch (b.dataSource) {
 				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
@@ -923,7 +946,7 @@ void function Registry_InferPhase() {
 				case eParamSource.DATATABLE:
 					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task) {
 						if (b.value == null) {
-							registry.logger.Fatal( "Task '%s' crashed, argument '%s' has null value", task.name, b.colName );
+							Logger_Fatal( "Task '{}' crashed, argument '{}' has null value", task.name, b.colName );
 						}
 
 						array arr = expect array(b.value)
@@ -933,7 +956,7 @@ void function Registry_InferPhase() {
 
 					b.Get = var function( int r ) : (b, task) {
 						if (b.value == null) {
-							registry.logger.Fatal( "Task '%s' crashed, argument '%s' has null value", task.name, b.colName );
+							Logger_Fatal( "Task '{}' crashed, argument '{}' has null value", task.name, b.colName );
 						}
 
 						return (expect array(b.value))[r]
@@ -948,14 +971,14 @@ void function Registry_InferPhase() {
 }
 
 void function Registry_CachePhase() {
-	registry.logger.SetPhase("CACHE")
+	registry.phase = "CACHE"
 
 	//		Process overrides, link bindings
 	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
 		//		Retrieve task-specific bindings
 		//	Can't operate on something that isn't indexed
 		if( !(task.name in registry.allBindings) ) {
-			registry.logger.Fatal( "Requested task '%s', which does not exist", task.name)
+			Logger_Fatal( "Requested task '{}', which does not exist", task.name)
 		}
 
 		array<ParamBinding> taskBindings = registry.allBindings[task.name]
@@ -970,7 +993,7 @@ void function Registry_CachePhase() {
             }
 
             if (!isValid) {
-				registry.logger.Fatal( "Task '%s' requested %s#\"%s\" which does not exist", task.name, task.rpakPath, key )
+				Logger_Fatal( "Task '{}' requested {}#\"{}\" which does not exist", task.name, task.rpakPath, key )
 			}
         }
 
@@ -1009,7 +1032,7 @@ void function Registry_CachePhase() {
 			//	Third block, directly links ParamBindings to RPaks
 			if (b.dataSource == eParamSource.DATATABLE) {
 				if (b.colName == "") {
-					registry.logger.Fatal( "Task '%s' argument '%s' cannot be inferred from '%s'. Missing override?", task.name, b.argName, task.rpakPath )
+					Logger_Fatal( "Task '{}' argument '{}' cannot be inferred from '{}'. Missing override?", task.name, b.argName, task.rpakPath )
 				}
 
 				fromTable.append(b)
@@ -1061,12 +1084,12 @@ void function Registry_CachePhase() {
 				continue
 			}
 
-			registry.logger.Iter( b.colName )
+			ArmoryLog_Iter(registry.logger, b.colName)
 
 			//	Fetch numeric index for column, throw error if not found
 			int colIdx = GetDataTableColumnByName( dt, b.colName )
 			if (colIdx == -1) {
-				registry.logger.Fatal("Task '%s' requested %s#\"%s\" which does not exist", task.name, task.rpakPath, b.colName )
+				Logger_Fatal("Task '{}' requested {}#\"{}\" which does not exist", task.name, task.rpakPath, b.colName )
 			}
 
 			//	Index into colsToFetch
@@ -1113,7 +1136,7 @@ void function Registry_CachePhase() {
 
 		//		Save to central state
 		registry.cache[task.rpakPath] <- rpak
-		registry.logger.Info( "Task '%s' cached RPak %s (%d rows)", task.name, task.rpakPath, numRows )
+		Logger_Info( "Task '{}' cached RPak {} (%d rows)", task.name, task.rpakPath, numRows )
 	}
 
 	//		Clear queues
@@ -1121,7 +1144,7 @@ void function Registry_CachePhase() {
 }
 
 void function Registry_PatchPhase() {
-	registry.logger.SetPhase("PATCH")
+	registry.phase = "PATCH"
 
 	//	Processing functions
 
@@ -1136,14 +1159,14 @@ void function Registry_PatchPhase() {
 			case eTaskType.MUTATOR:		srcTable = registry.mutBindings; break;
 			case eTaskType.GENERATOR:	srcTable = registry.genBindings; break;
 			default:
-				registry.logger.Warn("Task '%s' in registry.queuePatchAllTasks is unpermitted type", task.name)
+				Logger_Warn("Task '{}' in registry.queuePatchAllTasks is unpermitted type", task.name)
 				break;
 		}
 
 		//	Grab the bindings
 		array<ParamBinding> taskBindings
 		if(!(task.name in srcTable)) {
-			registry.logger.Warn("Task '%s' could not be found in the registry", task.name)
+			Logger_Warn("Task '{}' could not be found in the registry", task.name)
 			continue
 		} else { taskBindings = srcTable[task.name]; }
 		/* ... some sanity checks here ... */
@@ -1162,20 +1185,20 @@ void function Registry_PatchPhase() {
 		//	Ensure the binding values are non-null, unless generated
 		foreach (ParamBinding b in taskBindings) {
 			//	Log the active parameter
-			registry.logger.Iter(b.argName)
+			ArmoryLog_Iter(registry.logger, b.argName)
 
 			//	Validate value state before calling with parameters
 			if (b.dataSource == eParamSource.DATATABLE && b.value == null) {
-				registry.logger.Fatal("Patch '%s' argument '%s' has unresolved data binding.", task.name, b.argName)
+				Logger_Fatal("Patch '{}' argument '{}' has unresolved data binding.", task.name, b.argName)
 			}
 
 			//	Validate function getter
 			if (b.Get == null) {
-				registry.logger.Fatal("Patch '%s' aborted: Getter for argument '%s' resolved to null.", task.name, b.argName)
+				Logger_Fatal("Patch '{}' aborted: Getter for argument '{}' resolved to null.", task.name, b.argName)
 			}
 		}
 
-		registry.logger.Info("Patch '%s' bindings validated", task.name)
+		Logger_Info("Patch '{}' bindings validated", task.name)
 	}
 
 	//		2).	Data Initialization
@@ -1206,7 +1229,7 @@ void function Registry_PatchPhase() {
 		array<ParamBinding> funcBindings = []
 		foreach (string argName in bp.rawArgs) {
 			if (!(argName in mapBindings)) {
-				registry.logger.Fatal( "Mutator '%s' missing data binding for requested mutator param '%s'", task.name, argName )
+				Logger_Fatal( "Mutator '{}' missing data binding for requested mutator param '{}'", task.name, argName )
 			}
 			funcBindings.append(mapBindings[argName])
 		}
@@ -1251,7 +1274,7 @@ void function Registry_PatchPhase() {
 		//	Mutator specific exit: abort if no data exists
 		int numRows = task.numRows
 		if (task.taskType == eTaskType.MUTATOR && numRows == 0) {
-			registry.logger.Info( "Mutator '%s' has no data, skipping", task.name )
+			Logger_Info( "Mutator '{}' has no data, skipping", task.name )
 			continue
 		}
 
@@ -1296,7 +1319,7 @@ void function Registry_PatchPhase() {
 				case eTaskType.MUTATOR:
 					//	Raise fatal error if call fails
 					if (result == null || typeof(result) != "table") {
-						registry.logger.Fatal( "Mutator '%s' row %d returned '%s', expected table", task.name, r, typeof(result) )
+						Logger_Fatal( "Mutator '{}' row %d returned '{}', expected table", task.name, r, typeof(result) )
 					}
 
 					//	Mutate existing tracked state in-line
@@ -1311,8 +1334,8 @@ void function Registry_PatchPhase() {
 				case eTaskType.GENERATOR:
 					//	Raise fatal error if call fails
 					if (result == null || typeof(result) != "table") {
-						if (numRows == 0) { registry.logger.Fatal( "Generator '%s' expected array of tables, got %s", task.name, typeof(result) ) }
-						registry.logger.Fatal( "Generator '%s' row %d expected array of tables, got %s", task.name, r, typeof(result) )
+						if (numRows == 0) { Logger_Fatal( "Generator '{}' expected array of tables, got {}", task.name, typeof(result) ) }
+						Logger_Fatal( "Generator '{}' row %d expected array of tables, got {}", task.name, r, typeof(result) )
 					}
 
 					//	Append expanded row generations to buffer
@@ -1355,7 +1378,7 @@ void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 		//		Iterate over table
 		//	Test validation
 		foreach ( ParamBinding b in bindings ) {
-			if ( b.Get == null ) { registry.logger.Fatal("Mutator '%s' aborted: Getter for argument '%s' resolved to null.", task.name, b.argName) }
+			if ( b.Get == null ) { Logger_Fatal("Mutator '{}' aborted: Getter for argument '{}' resolved to null.", task.name, b.argName) }
 		}
 
 		//	Discover row count
