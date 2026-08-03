@@ -481,23 +481,25 @@ Replace:	const string $1_INFO
 
 void function Logger_Info( string fmtStr, ... )  {
 	array<string> cols = [ "phase", registry.phase ]
-	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Info( registry.logger, cols, fmtStr, args )
 }
 void function Logger_Warn( string fmtStr, ... )  {
 	array<string> cols = [ "phase", registry.phase ]
-	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
 }
 void function Logger_Error( string fmtStr, ... ) {
 	array<string> cols = [ "phase", registry.phase ]
-	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
-	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
+	ArmoryLog_Error( registry.logger, cols, fmtStr, args )
 }
 void function Logger_Fatal( string fmtStr, ... ) {
 	array<string> cols = [ "phase", registry.phase ]
-	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append(expect string(vargv[i])) }
-	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
+	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
+	ArmoryLog_Error( registry.logger, cols, fmtStr, args )
+
+	throw "FATAL: Check the console log / file for details"
 }
 
 ///	===========================================================================
@@ -693,7 +695,7 @@ struct {
 ///	============================================================================
 void function RegistryPipelineInit() {
 	//		Reset state
-	registry.logger = ArmoryLog_Create("{#phase:^7}{m}", "|,-,+")
+	registry.logger = ArmoryLog_Create("{#phase:^7}{message}", "|,-,+")
 	registry.phase = "INIT"
 
 	registry.topoID = ArmoryUtils_TopoCreate()
@@ -805,13 +807,13 @@ void function Registry_InferFunction(
 	if (taskName in registry.taskCounter) {
 		taskNum = registry.taskCounter[taskName]
 
-		string prevName = format("{}_%3d", taskName, taskNum-1)
+		string prevName = format("%s_%3d", taskName, taskNum-1)
 		before.append(prevName)
 	} else { registry.taskCounter[taskName] <- taskNum }
 	registry.taskCounter[taskName] ++
 
 	//	Adjust name
-	string currName = format("{}_%3d", taskName, taskNum)
+	string currName = format("%s_%3d", taskName, taskNum)
 
 	//		Register task and dependencies
 	ArmoryUtils_TopoNode( registry.topoID, currName )
@@ -857,7 +859,7 @@ void function Registry_InferRPakData(
 	//	Retrieve tasks bound to this name
 	array<string> taskNames = []
 	for (int i = 0; i < registry.taskCounter[taskName]; i++) {
-		taskNames.append( format("{}_%3d", taskName, i) )
+		taskNames.append( format("%s_%3d", taskName, i) )
 	}
 
 	//		Instantiate tasks
@@ -924,6 +926,8 @@ void function Registry_InferPhase() {
 		destTable[task.name] <- fromFunc
 		registry.allBindings[task.name] <- fromFunc
 		bp.destArray = destTable[task.name]
+
+		registry.queueInfer_Blueprint.append(bp)
 	}
 
 	//*		Blueprints
@@ -1136,7 +1140,7 @@ void function Registry_CachePhase() {
 
 		//		Save to central state
 		registry.cache[task.rpakPath] <- rpak
-		Logger_Info( "Task '{}' cached RPak {} (%d rows)", task.name, task.rpakPath, numRows )
+		Logger_Info( "Task '{}' cached RPak {} ({} rows)", task.name, task.rpakPath, numRows )
 	}
 
 	//		Clear queues
@@ -1597,18 +1601,21 @@ void function InitItems()
 	// Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData), {
 	// 	ref="itemRef"})
 
-	dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-		int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-		bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
-		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "vanilla_pilot_abilities")
+	Registry_InferRPakData( "vanilla_pilot_abilities", $"datatable/pilot_abilities.rpak", { ref = "itemRef" })
 
-		CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
-	}
+	// dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
+	// }
 
 	// //////////////////////
 	// PILOT MODS/ATTACHMENTS
@@ -1740,17 +1747,19 @@ void function InitItems()
 	// Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
 	// 	ref="type", itemType=eItemTypes.PILOT_SUIT })
 
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_suits")
+	Registry_InferRPakData( "vanilla_pilot_suits", $"datatable/pilot_passives.rpak", { ref = "type" })
 
-	dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
-		asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-		int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
+	// 	asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-		CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
-	}
+	// 	CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
+	// }
 
 	CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
