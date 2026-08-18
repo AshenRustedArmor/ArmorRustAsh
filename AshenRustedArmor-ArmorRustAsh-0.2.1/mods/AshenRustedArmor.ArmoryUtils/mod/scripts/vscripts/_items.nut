@@ -479,23 +479,36 @@ Replace:	const string $1_INFO
 // //	BUILD Phase
 // const string BUILD_ERROR_GETTER_NULL		= "Factory '{}' row %d aborted: Getter for argument '{}' resolved to null."
 
+//		Phase Tags
+const string ANSI_END = "\x1b[0m"
+const array<string> REGISTRY_PHASES = [
+    "[INIT]",	//"\x1b[1;35m[INIT]"	+ ANSI_END,	// LMagenta
+    "[INFER]",	//"\x1b[0;35m[INFER]"	+ ANSI_END,	// DMagenta
+    "[CACHE]",	//"\x1b[0;33m[CACHE]"	+ ANSI_END,	// DYellow
+    "[STAGE]",	//"\x1b[1;33m[STAGE]"	+ ANSI_END, // BYellow
+    "[PATCH]",	//"\x1b[0;32m[PATCH]"	+ ANSI_END, // DGreen
+    "[BUILD]",	//"\x1b[1;32m[BUILD]"	+ ANSI_END, // BGreen
+    "[READY]",	//"\x1b[1;34m[READY]"	+ ANSI_END  // BBlue
+]
+
+//		Logging functions
 void function Logger_Info( string fmtStr, ... )  {
-	array<string> cols = [ "phase", registry.phase ]
+	array<string> cols = [ "phase", REGISTRY_PHASES[registry.phase] ]
 	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Info( registry.logger, cols, fmtStr, args )
 }
 void function Logger_Warn( string fmtStr, ... )  {
-	array<string> cols = [ "phase", registry.phase ]
+	array<string> cols = [ "phase", REGISTRY_PHASES[registry.phase] ]
 	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Warn( registry.logger, cols, fmtStr, args )
 }
 void function Logger_Error( string fmtStr, ... ) {
-	array<string> cols = [ "phase", registry.phase ]
+	array<string> cols = [ "phase", REGISTRY_PHASES[registry.phase] ]
 	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Error( registry.logger, cols, fmtStr, args )
 }
 void function Logger_Fatal( string fmtStr, ... ) {
-	array<string> cols = [ "phase", registry.phase ]
+	array<string> cols = [ "phase", REGISTRY_PHASES[registry.phase] ]
 	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Error( registry.logger, cols, fmtStr, args )
 
@@ -554,7 +567,7 @@ struct TaskInfer_Function {
 }
 
 //	Intermediate representation for parameter extraction.
-struct TaskInfer_Blueprint {
+struct TaskStage_Blueprint {
 	string name
 
 	//	Extracted functionality from the target
@@ -643,7 +656,7 @@ table< string, ParamBinding > inferences = {}
 //	Registry
 struct {
 	int logger = -1
-	string phase = "INIT"
+	int phase = 0
 
 	int topoID = -1
 
@@ -652,19 +665,11 @@ struct {
 //	array< void functionref() > cb_OnRegistryMutate
 
 	/// === QUEUES ============================================================
-	//	Bindings Phase
-	array<TaskInfer_Function>	queueInfer_Function
-	array<TaskInfer_Blueprint>	queueInfer_Blueprint
-
-	//	Cache Phase
-	array<TaskCache_BindData>	queueCache_BindData
-	array<TaskCache_BindRPak>	queueCache_BindRPak
-
-	//	Mutate Phase
-	array<TaskOrdered>			queuePatchAllTasks
-
-	//	Bake Phase
-	array<TaskBuild_ItemData>	queueBuild_ItemData //BakeBaseItems 	//	Order required to ensure correct inheritance
+	array<TaskInfer_Function>	queueInfer_Function		//	Infer Phase
+	array<TaskCache_BindRPak>	queueCache_BindRPak		//	Cache Phase
+	array<TaskStage_Blueprint>	queueStage_Blueprint	//	Stage Phase
+	array<TaskOrdered>			queuePatchAllTasks		//	Patch Phase
+	array<TaskBuild_ItemData>	queueBuild_ItemData		//	Build Phase
 
 	/// === BINDINGS ==========================================================
 	//	Appends nubmers to name to prevent collisions from multiple calls
@@ -695,21 +700,17 @@ struct {
 ///	============================================================================
 void function RegistryPipelineInit() {
 	//		Reset state
-	registry.logger = ArmoryLog_Create("{#phase:^7}{message}", "|,-,+")
-	registry.phase = "INIT"
+	registry.logger = ArmoryLog_Create("{#phase:^7} {message}", "|,-,+")
+	registry.phase = 0
 
 	registry.topoID = ArmoryUtils_TopoCreate()
 
 	//	Clear queues
-	registry.queueInfer_Function.clear()
-	registry.queueInfer_Blueprint.clear()
-
-	registry.queueCache_BindData.clear()
-	registry.queueCache_BindRPak.clear()
-
-	registry.queuePatchAllTasks.clear()
-
-	registry.queueBuild_ItemData.clear()
+	registry.queueInfer_Function.clear()	//	INFER
+	registry.queueCache_BindRPak.clear()	//	CACHE
+	registry.queueStage_Blueprint.clear()	//	STAGE
+	registry.queuePatchAllTasks.clear()		//	PATCH
+	registry.queueBuild_ItemData.clear()	//	BUILD
 
 	//	Reset bindings
 	registry.taskCounter = {}
@@ -781,8 +782,8 @@ ParamBinding function InferParamBinding( string argName ) {
 ///	===========================================================================
 ///								Job Builders
 ///	===========================================================================
-TaskInfer_Blueprint function Registry_ReflectFunc( var target ) {
-	TaskInfer_Blueprint bp
+TaskStage_Blueprint function Registry_ReflectFunc( var target ) {
+	TaskStage_Blueprint bp
 
 	local infos = target.getinfos()
 
@@ -807,13 +808,13 @@ void function Registry_InferFunction(
 	if (taskName in registry.taskCounter) {
 		taskNum = registry.taskCounter[taskName]
 
-		string prevName = format("%s_%3d", taskName, taskNum-1)
+		string prevName = format("%s_%03d", taskName, taskNum-1)
 		before.append(prevName)
 	} else { registry.taskCounter[taskName] <- taskNum }
 	registry.taskCounter[taskName] ++
 
 	//	Adjust name
-	string currName = format("%s_%3d", taskName, taskNum)
+	string currName = format("%s_%03d", taskName, taskNum)
 
 	//		Register task and dependencies
 	ArmoryUtils_TopoNode( registry.topoID, currName )
@@ -859,7 +860,7 @@ void function Registry_InferRPakData(
 	//	Retrieve tasks bound to this name
 	array<string> taskNames = []
 	for (int i = 0; i < registry.taskCounter[taskName]; i++) {
-		taskNames.append( format("%s_%3d", taskName, i) )
+		taskNames.append( format("%s_%03d", taskName, i) )
 	}
 
 	//		Instantiate tasks
@@ -877,10 +878,12 @@ void function Registry_InferRPakData(
 ///								Task Processing
 ///	============================================================================
 void function Registry_InferPhase() {
-	registry.phase = "INFER"
+	registry.phase++
 
 	//	Infer bindings from function parameter reflection
 	foreach (TaskInfer_Function task in registry.queueInfer_Function) {
+		ArmoryLog_Iter(registry.logger, task.name)
+
 		//		Sanity checks
 		//	Preemptive null name check - can't index
 		if (task.name == "") { continue; }
@@ -893,7 +896,7 @@ void function Registry_InferPhase() {
 
 		//		Build Blueprint
 		//	Retrieve base data
-		TaskInfer_Blueprint bp = Registry_ReflectFunc( task.target )
+		TaskStage_Blueprint bp = Registry_ReflectFunc( task.target )
 
 		//	Initialize bindings from target
 		array<ParamBinding> fromFunc = []
@@ -927,55 +930,17 @@ void function Registry_InferPhase() {
 		registry.allBindings[task.name] <- fromFunc
 		bp.destArray = destTable[task.name]
 
-		registry.queueInfer_Blueprint.append(bp)
+		registry.queueStage_Blueprint.append(bp)
 	}
 
-	//*		Blueprints
-	foreach (TaskInfer_Blueprint task in registry.queueInfer_Blueprint) {
-		//		Access
+	Logger_Info( "Inferred bindings for [%I{, }]")
 
-		//		Initialize get functions
-		//	This was initially done in the Bake phase, but has been moved here
-		//	to allow the Mutate phase to access the Get functions. 'fromFunc'
-		//	contains all bindings, so only this needs to be mapped over.
-		Logger_Info( "Setting getters for Task '{}'", task.name)
-		foreach (ParamBinding b in task.destArray) {
-			ArmoryLog_Iter(registry.logger, b.argName)	//	Using this function automatically adds to a log line
-
-			switch (b.dataSource) {
-				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
-				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
-
-				case eParamSource.GENERATED:
-				case eParamSource.DATATABLE:
-					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task) {
-						if (b.value == null) {
-							Logger_Fatal( "Task '{}' crashed, argument '{}' has null value", task.name, b.colName );
-						}
-
-						array arr = expect array(b.value)
-						string typeStr = expect string( arr[r] )
-						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
-					}; break; }
-
-					b.Get = var function( int r ) : (b, task) {
-						if (b.value == null) {
-							Logger_Fatal( "Task '{}' crashed, argument '{}' has null value", task.name, b.colName );
-						}
-
-						return (expect array(b.value))[r]
-					}; break;
-			}
-		}
-	}
-
-	//		Clear queues
+//		Clear queues
 	registry.queueInfer_Function.clear()
-	registry.queueInfer_Blueprint.clear()
 }
 
 void function Registry_CachePhase() {
-	registry.phase = "CACHE"
+	registry.phase++
 
 	//		Process overrides, link bindings
 	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
@@ -1147,8 +1112,53 @@ void function Registry_CachePhase() {
 	registry.queueCache_BindRPak.clear()
 }
 
+void function Registry_StagePhase() {
+	registry.phase++
+
+	//		Compile binding getter closures
+	//	Binding closures cannot be finalized prior to overriding parameters in
+	//	the CACHE phase, otherwise executing closures during PATCH / BUILD will
+	//	throw type errors trying to index non-array static values.
+	foreach (TaskStage_Blueprint task in registry.queueStage_Blueprint) {
+		//	contains all bindings, so only this needs to be mapped over.
+		foreach (ParamBinding b in task.destArray) {
+			ArmoryLog_Iter(registry.logger, b.argName)
+
+			switch (b.dataSource) {
+				case eParamSource.ROW_INDEX:	b.Get = var function( int r ) { return r; }; break;
+				case eParamSource.STATIC_VAL:	b.Get = var function( int r ) : (b) { return b.value; }; break;
+
+				case eParamSource.GENERATED:
+				case eParamSource.DATATABLE:
+					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task) {
+						if (b.value == null) {
+							Logger_Fatal( "Task '{}' crashed, argument '{}' has null value", task.name, b.colName );
+						}
+
+						array arr = expect array(b.value)
+						string typeStr = expect string( arr[r] )
+						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
+					}; break; }
+
+					b.Get = var function( int r ) : (b, task) {
+						if (b.value == null) {
+							Logger_Fatal( "Task '{}' crashed, argument '{}' has null value", task.name, b.colName );
+						}
+
+						return (expect array(b.value))[r]
+					}; break;
+			}
+		}
+
+		Logger_Info( "Inferred bindings for task '{}', [%I{, }]", task.name)
+	}
+
+	//		Clear queues
+	registry.queueStage_Blueprint.clear()
+}
+
 void function Registry_PatchPhase() {
-	registry.phase = "PATCH"
+	registry.phase++
 
 	//	Processing functions
 
@@ -1222,7 +1232,7 @@ void function Registry_PatchPhase() {
 
 		//		;dkfjgha;dskrjg
 		//	Reflect function info
-		TaskInfer_Blueprint bp = Registry_ReflectFunc( task.target )
+		TaskStage_Blueprint bp = Registry_ReflectFunc( task.target )
 
 		//	Map task bindings to arg names for O(1) matching against function
 		table<string, ParamBinding> mapBindings = {}
@@ -1369,6 +1379,8 @@ void function Registry_PatchPhase() {
 }
 
 void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
+	registry.phase++
+
 	//		ItemData baking
 	foreach (TaskBuild_ItemData task in queue) {
 		//		Sanity checks
@@ -1417,19 +1429,32 @@ void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 }
 
 void function Registry_ExecutePipeline() {
-	//	Phase 1: Reflect on functions, handle defaults, map overrides
-//	registry.queueInfer_RPak.sort( PrioritySortComparator )
+	//	Phase 1: Reflect on functions, handle defaults, build blueprints
 	Registry_InferPhase()
 
-	//	Phase 2: Deduplicate columns across all jobs, query RPak files, populate RAM cache
+	//	Phase 2: Process columns/overrides, query RPak files, populate memory cache
 	Registry_CachePhase()
 
-	//	Phase 3: Optional mid-pipeline modifications by other sub-mods
-//	registry.queuePatchModify.sort( PrioritySortComparator )
+	//	Phase 3: Bake parameter getter closures ('b.Get') after override resolution
+	Registry_StagePhase()
+
+	//	Topological sort
+	array<string> sortedNames = ArmoryUtils_TopoSortSafe( registry.topoID )
+
+	table<string, TaskOrdered> patchMap = {}
+	foreach (task in registry.queuePatchAllTasks) {
+		patchMap[task.name] <- task
+	}
+
+	registry.queuePatchAllTasks.clear()
+	foreach (name in sortedNames) { if (name in patchMap) {
+		registry.queuePatchAllTasks.append(patchMap[name])
+	}}
+
+	//	Phase 4: Execute mid-pipeline modifications / data generation in topological order
 	Registry_PatchPhase()
 
-	//	Phase 4: Construct argument lists and unbox data natively into the factory methods
-//	registry.queueBuild_ItemData.sort( PrioritySortComparator )
+	//	Phase 5: Construct argument lists and unbox data natively into the factory methods
 	Registry_BuildPhase( registry.queueBuild_ItemData )
 }
 
@@ -1601,21 +1626,21 @@ void function InitItems()
 	// Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData), {
 	// 	ref="itemRef"})
 
-	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "vanilla_pilot_abilities")
-	Registry_InferRPakData( "vanilla_pilot_abilities", $"datatable/pilot_abilities.rpak", { ref = "itemRef" })
+	// Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "vanilla_pilot_abilities")
+	// Registry_InferRPakData( "vanilla_pilot_abilities", $"datatable/pilot_abilities.rpak", { ref = "itemRef" })
 
-	// dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-	// 	bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
-	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+		int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+		bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
+		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// 	CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
-	// }
+		CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
+	}
 
 	// //////////////////////
 	// PILOT MODS/ATTACHMENTS
@@ -1747,19 +1772,19 @@ void function InitItems()
 	// Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
 	// 	ref="type", itemType=eItemTypes.PILOT_SUIT })
 
-	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_suits")
-	Registry_InferRPakData( "vanilla_pilot_suits", $"datatable/pilot_passives.rpak", { ref = "type" })
+	//Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_suits")
+	//Registry_InferRPakData( "vanilla_pilot_suits", $"datatable/pilot_passives.rpak", { ref = "type" })
 
-	// dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
-	// numRows = GetDatatableRowCount( dataTable )
-	// for ( int i = 0; i < numRows; i++ )
-	// {
-	// 	string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
-	// 	asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-	// 	int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
+	numRows = GetDatatableRowCount( dataTable )
+	for ( int i = 0; i < numRows; i++ )
+	{
+		string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
+		asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+		int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	// 	CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
-	// }
+		CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
+	}
 
 	CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
@@ -1770,6 +1795,11 @@ void function InitItems()
 	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref }
 	// })
 
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_taunts")
+	Registry_InferRPakData("vanilla_pilot_taunts", $"datatable/pilot_executions.rpak", {
+		itemType = eItemTypes.PILOT_EXECUTION
+	})
+
 	// jobID = Registry_RPakJob( $"datatable/pilot_executions.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
 	// 	itemType=eItemTypes.PILOT_EXECUTION })
 	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
@@ -1778,22 +1808,22 @@ void function InitItems()
 	// 	reqPrime = [ eColType.BOOL ] })
 	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
 
-	dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
-		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-		string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
-		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-		if ( IsDisabledRef( ref ) )
-			continue
+	// 	if ( IsDisabledRef( ref ) )
+	// 		continue
 
-		CreatePassiveData( i, eItemTypes.PILOT_EXECUTION, hidden, ref, name, description, description, image, cost )
-	}
+	// 	CreatePassiveData( i, eItemTypes.PILOT_EXECUTION, hidden, ref, name, description, description, image, cost )
+	// }
 
 	// ///////////////////
 	// TITAN EXECUTION DATA
