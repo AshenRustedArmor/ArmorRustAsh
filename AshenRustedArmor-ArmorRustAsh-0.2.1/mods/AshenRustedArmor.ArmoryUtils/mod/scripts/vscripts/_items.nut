@@ -482,13 +482,13 @@ Replace:	const string $1_INFO
 //		Phase Tags
 const string ANSI_END = "\x1b[0m"
 const array<string> REGISTRY_PHASES = [
-    "[INIT]",	//"\x1b[1;35m[INIT]"	+ ANSI_END,	// LMagenta
-    "[INFER]",	//"\x1b[0;35m[INFER]"	+ ANSI_END,	// DMagenta
-    "[CACHE]",	//"\x1b[0;33m[CACHE]"	+ ANSI_END,	// DYellow
-    "[STAGE]",	//"\x1b[1;33m[STAGE]"	+ ANSI_END, // BYellow
-    "[PATCH]",	//"\x1b[0;32m[PATCH]"	+ ANSI_END, // DGreen
-    "[BUILD]",	//"\x1b[1;32m[BUILD]"	+ ANSI_END, // BGreen
-    "[READY]",	//"\x1b[1;34m[READY]"	+ ANSI_END  // BBlue
+	"[INIT]",	//"\x1b[1;35m[INIT]"	+ ANSI_END,	// LMagenta
+	"[INFER]",	//"\x1b[0;35m[INFER]"	+ ANSI_END,	// DMagenta
+	"[CACHE]",	//"\x1b[0;33m[CACHE]"	+ ANSI_END,	// DYellow
+	"[STAGE]",	//"\x1b[1;33m[STAGE]"	+ ANSI_END, // BYellow
+	"[PATCH]",	//"\x1b[0;32m[PATCH]"	+ ANSI_END, // DGreen
+	"[BUILD]",	//"\x1b[1;32m[BUILD]"	+ ANSI_END, // BGreen
+	"[READY]",	//"\x1b[1;34m[READY]"	+ ANSI_END  // BBlue
 ]
 
 //		Logging functions
@@ -662,7 +662,6 @@ struct {
 
 	/// === CALLBACKS =========================================================
 //	array< void functionref() > cb_OnRegistryInit
-//	array< void functionref() > cb_OnRegistryMutate
 
 	/// === QUEUES ============================================================
 	array<TaskInfer_Function>	queueInfer_Function		//	Infer Phase
@@ -673,7 +672,8 @@ struct {
 
 	/// === BINDINGS ==========================================================
 	//	Appends nubmers to name to prevent collisions from multiple calls
-	table< string, int > taskCounter
+	table< string, int >			taskCounter
+	table< string, array<string> >	subtasks
 
 	//	Maps task name -> array of dependent bindings
 	table< string, array<ParamBinding> > allBindings
@@ -771,7 +771,7 @@ ParamBinding function InferParamBinding( string argName ) {
 
 	if (lower in inferences) { b = clone inferences[lower]; }
 	else {
-	    b.colName = argName;
+		b.colName = argName;
 	}
 
 	//	We can always assume the argName is the passed value, override later
@@ -782,6 +782,35 @@ ParamBinding function InferParamBinding( string argName ) {
 ///	===========================================================================
 ///								Job Builders
 ///	===========================================================================
+
+string function Registry_GetTaskName( string name ) {
+	string taskName	= name
+
+	int i = name.len()
+	while (i > 0 && name[i-1] >= '0' && name[i-1] <= '9') { i--; }
+	if (i < name.len() && i > 0 && name[i-1] == '_') {
+		taskName = name.slice(0, i-1)
+	}
+
+	return taskName
+}
+
+array<string> function Registry_GetSubNames( string name ) {
+	array<string> subNames = []
+
+	string taskName	= Registry_GetTaskName( name )
+	if (!(taskName in registry.taskCounter)) {
+		subNames.append( taskName )
+	} else {
+		for (int i = 0; i < registry.taskCounter[taskName]; i++) {
+			subNames.append( format("%s_%03d", taskName, i) )
+		}
+	}
+
+	return subNames
+}
+
+
 TaskStage_Blueprint function Registry_ReflectFunc( var target ) {
 	TaskStage_Blueprint bp
 
@@ -857,15 +886,9 @@ void function Registry_InferRPakData(
 		return
 	}
 
-	//	Retrieve tasks bound to this name
-	array<string> taskNames = []
-	for (int i = 0; i < registry.taskCounter[taskName]; i++) {
-		taskNames.append( format("%s_%03d", taskName, i) )
-	}
-
 	//		Instantiate tasks
 	//	Instantiate and queue tasks for caching phase
-	foreach (string currName in taskNames) {
+	foreach (string currName in Registry_GetSubNames(taskName)) {
 		TaskCache_BindRPak taskCache
 		taskCache.name		= currName
 		taskCache.rpakPath	= rpakPath
@@ -882,8 +905,6 @@ void function Registry_InferPhase() {
 
 	//	Infer bindings from function parameter reflection
 	foreach (TaskInfer_Function task in registry.queueInfer_Function) {
-		ArmoryLog_Iter(registry.logger, task.name)
-
 		//		Sanity checks
 		//	Preemptive null name check - can't index
 		if (task.name == "") { continue; }
@@ -897,6 +918,7 @@ void function Registry_InferPhase() {
 		//		Build Blueprint
 		//	Retrieve base data
 		TaskStage_Blueprint bp = Registry_ReflectFunc( task.target )
+		bp.name = task.name
 
 		//	Initialize bindings from target
 		array<ParamBinding> fromFunc = []
@@ -931,9 +953,11 @@ void function Registry_InferPhase() {
 		bp.destArray = destTable[task.name]
 
 		registry.queueStage_Blueprint.append(bp)
+
+		Logger_Info( "Inferred bindings for task '{}'", task.name)
 	}
 
-	Logger_Info( "Inferred bindings for [%I{, }]")
+	//Logger_Info( "Inferred bindings for [%I{, }]")
 
 //		Clear queues
 	registry.queueInfer_Function.clear()
@@ -942,33 +966,46 @@ void function Registry_InferPhase() {
 void function Registry_CachePhase() {
 	registry.phase++
 
+	table< string, table<string, ParamBinding> > validArgs = {}	//	taskName, {argName, ...}
+	foreach (string subName, array<ParamBinding> bindings in registry.allBindings) {
+		//	Create an index for all subtasks
+		string taskName = Registry_GetTaskName(subName)
+		if (!(taskName in validArgs)) { validArgs[taskName] <- {} }
+
+		//	Insert/assign to the same argname is safe
+		foreach (ParamBinding b in bindings) {
+			validArgs[taskName][b.argName] <- b
+		}
+	}
+
 	//		Process overrides, link bindings
 	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
 		//		Retrieve task-specific bindings
 		//	Can't operate on something that isn't indexed
-		if( !(task.name in registry.allBindings) ) {
+		if (!(task.name in registry.allBindings)) {
 			Logger_Fatal( "Requested task '{}', which does not exist", task.name)
 		}
 
-		array<ParamBinding> taskBindings = registry.allBindings[task.name]
+		string taskName = Registry_GetTaskName(task.name)
+		if (!(taskName in validArgs)) {
+			Logger_Warn("Requested task '{}', which does not exist", taskName)
+		}
 
 		//	1).	Validate overrides against arguments
-		//	First block of deprecated TaskBindings_Blueprint code, can't fetch
-		//	columns that aren't part of the datatable
-		foreach (string key, var val in task.overrides) {
-            bool isValid = false
-            foreach (ParamBinding b in taskBindings) {
-				isValid = (b.argName == key) || isValid
-            }
-
-            if (!isValid) {
-				Logger_Fatal( "Task '{}' requested {}#\"{}\" which does not exist", task.name, task.rpakPath, key )
+		//	Prevents hard crashes from attempting to fetch non-existent table
+		//	columns. Alterting developers to typos/missing parameters requires
+		//	checking for usage across all subtasks.
+		foreach (string key, var _ in task.overrides) {
+			if (!(key in validArgs[taskName])) {
+				Logger_Warn( "Task '{}' requested {}#\"{}\" which does not exist", task.name, task.rpakPath, key )
 			}
-        }
+		}
 
 		//	2).	Apply overrides
 		//	Second block excerpt, allows for flexible overriding - type,
 		//	column, static values, etc. Essential for type compatibility
+		array<ParamBinding> taskBindings = registry.allBindings[task.name]
+
 		array<ParamBinding> fromTable = []
 		foreach (ParamBinding b in taskBindings) {
 			if (b.argName in task.overrides) {
@@ -1150,7 +1187,7 @@ void function Registry_StagePhase() {
 			}
 		}
 
-		Logger_Info( "Inferred bindings for task '{}', [%I{, }]", task.name)
+		Logger_Info( "Staged bindings for task '{}': [%I{, }]", task.name)
 	}
 
 	//		Clear queues
@@ -1230,15 +1267,15 @@ void function Registry_PatchPhase() {
 		if(!(task.name in srcTable)) { continue }
 		array<ParamBinding> taskBindings = srcTable[task.name]
 
-		//		;dkfjgha;dskrjg
+		//		Grab task-specific context
 		//	Reflect function info
 		TaskStage_Blueprint bp = Registry_ReflectFunc( task.target )
+		bp.name = task.name
 
 		//	Map task bindings to arg names for O(1) matching against function
 		table<string, ParamBinding> mapBindings = {}
 		foreach (ParamBinding b in taskBindings) { mapBindings[b.argName] <- b }
 
-		//		Grab task-specific context
 		//	Isolate only the active bindings required by the function
 		array<ParamBinding> funcBindings = []
 		foreach (string argName in bp.rawArgs) {
@@ -1790,23 +1827,21 @@ void function InitItems()
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
 
 	//	Executions
-	// int jobID = 0
-	// var FilterDisabledRef = ArmoryUtils_ClosureBox(table function( string ref ) {
-	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref }
-	// })
+	var FilterDisabledRef = ArmoryUtils_ClosureBox(table function( string ref ) {
+		return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref }
+	})
 
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_taunts")
+	Registry_InferFunction(FilterDisabledRef, eTaskType.MUTATOR, "vanilla_pilot_taunts")
 	Registry_InferRPakData("vanilla_pilot_taunts", $"datatable/pilot_executions.rpak", {
 		itemType = eItemTypes.PILOT_EXECUTION
 	})
 
-	// jobID = Registry_RPakJob( $"datatable/pilot_executions.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-	// 	itemType=eItemTypes.PILOT_EXECUTION })
-	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
-
-	// jobID = Registry_RPakJob( $"datatable/titan_executions.rpak", ArmoryUtils_ClosureBox(CreateTitanExecutionData), {
-	// 	reqPrime = [ eColType.BOOL ] })
-	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = "ref"})
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_titan_taunts")
+	Registry_InferFunction(FilterDisabledRef, eTaskType.MUTATOR, "vanilla_titan_taunts")
+	Registry_InferRPakData("vanilla_titan_taunts", $"datatable/titan_executions.rpak", {
+		itemType = eItemTypes.PILOT_EXECUTION
+	})
 
 	// dataTable = GetDataTable( $"datatable/pilot_executions.rpak" )
 	// numRows = GetDatatableRowCount( dataTable )
@@ -1829,27 +1864,27 @@ void function InitItems()
 	// TITAN EXECUTION DATA
 	// ///////////////////
 
-	dataTable = GetDataTable( $"datatable/titan_executions.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-		if ( hidden == true )
-			continue
+	// dataTable = GetDataTable( $"datatable/titan_executions.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	if ( hidden == true )
+	// 		continue
 
-		string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
-		int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-		string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
-		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-		bool reqPrime = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "reqPrime" ) )
+	// 	string ref = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "ref" ) )
+	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 	bool reqPrime = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "reqPrime" ) )
 
-		if ( IsDisabledRef( ref ) )
-			continue
+	// 	if ( IsDisabledRef( ref ) )
+	// 		continue
 
-		CreateTitanExecutionData( i, itemType, hidden, ref, name, description, description, image, cost, reqPrime )
-	}
+	// 	CreateTitanExecutionData( i, itemType, hidden, ref, name, description, description, image, cost, reqPrime )
+	// }
 
 	///	========================================
 	///			MP features + playlist
