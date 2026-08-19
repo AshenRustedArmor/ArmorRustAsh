@@ -1977,18 +1977,6 @@ void function InitItems()
 	// ///////////////////
 	// PILOT SECONDARY MOD SLOTS
 	// ///////////////////
-	/*
-		[SCRIPT SV] [info] SCRIPT ERROR: [SERVER] The index "primarymod2" does not exist
-		[SCRIPT SV] [info]  -> CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
-		[SCRIPT SV] [info]
-		CALLSTACK
-		*FUNCTION [InitItems()] _items.nut line [2011]
-		*FUNCTION [Shared_Lobby_Init()] mp/_mp_sh_init.gnut line [40]
-		*FUNCTION [SPMP_Shared_Init()] mp/_mp_sh_init.gnut line [25]
-		*FUNCTION [SPMP_MapSpawn_Init()] mp/_mp_mapspawn.gnut line [64]
-		*FUNCTION [CodeCallback_MapSpawn()] _mapspawn.gnut line [188]
-	*/
-
 	var AttachmentSlotsGenerate = ArmoryUtils_ClosureBox(array function( string itemRef, string type ) {
 		bool primary = eItemTypes[type] == eItemTypes.PILOT_PRIMARY
 		string m2 = primary ? "primarymod2" : "secondarymod2"
@@ -2088,45 +2076,45 @@ void function InitItems()
 	// ///////////////
 	// TITAN MOD DATA
 	// ///////////////
-	dataTable = GetDataTable( $"datatable/titan_primary_mods_common.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	modCommonTable.clear()
+	// dataTable = GetDataTable( $"datatable/titan_primary_mods_common.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// modCommonTable.clear()
 
-	for ( int i = 0; i < numRows; i++ )
-	{
-		modCommonDef modCommon
-		modCommon.name = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COMMON_NAME_COLUMN )
-		modCommon.description = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COMMON_DESCRIPTION_COLUMN )
-		modCommon.image = GetDataTableAsset( dataTable, i, TITAN_PRIMARY_MOD_COMMON_IMAGE_COLUMN )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	modCommonDef modCommon
+	// 	modCommon.name = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COMMON_NAME_COLUMN )
+	// 	modCommon.description = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COMMON_DESCRIPTION_COLUMN )
+	// 	modCommon.image = GetDataTableAsset( dataTable, i, TITAN_PRIMARY_MOD_COMMON_IMAGE_COLUMN )
 
-		modCommon.dataTableIndex = i
+	// 	modCommon.dataTableIndex = i
 
-		string itemRef = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COMMON_COLUMN )
-		modCommonTable[ itemRef ] <- modCommon
-	}
+	// 	string itemRef = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COMMON_COLUMN )
+	// 	modCommonTable[ itemRef ] <- modCommon
+	// }
 
-	dataTable = GetDataTable( $"datatable/titan_primary_mods.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string mod = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COLUMN )
-		string weapon = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_WEAPON_COLUMN )
+	// dataTable = GetDataTable( $"datatable/titan_primary_mods.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string mod = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_COLUMN )
+	// 	string weapon = GetDataTableString( dataTable, i, TITAN_PRIMARY_MOD_WEAPON_COLUMN )
 
-		string name = modCommonTable[ mod ].name
-		string description = modCommonTable[ mod ].description
-		asset image = modCommonTable[ mod ].image
-		int dataTableIndex = modCommonTable[ mod ].dataTableIndex
+	// 	string name = modCommonTable[ mod ].name
+	// 	string description = modCommonTable[ mod ].description
+	// 	asset image = modCommonTable[ mod ].image
+	// 	int dataTableIndex = modCommonTable[ mod ].dataTableIndex
 
-		int damageDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_DAMAGEDISPLAY_COLUMN )
-		int accuracyDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_ACCURACYDISPLAY_COLUMN )
-		int rangeDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_RANGEDISPLAY_COLUMN )
-		int fireRateDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_FIRERATEDISPLAY_COLUMN )
-		int clipSizeDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_CLIPSIZEDISPLAY_COLUMN )
+	// 	int damageDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_DAMAGEDISPLAY_COLUMN )
+	// 	int accuracyDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_ACCURACYDISPLAY_COLUMN )
+	// 	int rangeDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_RANGEDISPLAY_COLUMN )
+	// 	int fireRateDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_FIRERATEDISPLAY_COLUMN )
+	// 	int clipSizeDisplay = GetDataTableInt( dataTable, i, TITAN_PRIMARY_MOD_CLIPSIZEDISPLAY_COLUMN )
 
-		bool hidden = GetDataTableBool( dataTable, i, TITAN_PRIMARY_MOD_HIDDEN_COLUMN )
-		// 		CreateModData( dataTableIndex, eItemTypes.TITAN_PRIMARY_MOD, weapon, mod, name, description,
-		// description, image, damageDisplay, accuracyDisplay, rangeDisplay, fireRateDisplay, clipSizeDisplay )
-	}
+	// 	bool hidden = GetDataTableBool( dataTable, i, TITAN_PRIMARY_MOD_HIDDEN_COLUMN )
+	// 	// 		CreateModData( dataTableIndex, eItemTypes.TITAN_PRIMARY_MOD, weapon, mod, name, description,
+	// 	// description, image, damageDisplay, accuracyDisplay, rangeDisplay, fireRateDisplay, clipSizeDisplay )
+	// }
 
 	/// ====================================================
 	/// 				TITAN PASSIVE DATA
@@ -2528,7 +2516,6 @@ void function InitItems()
 	// ///////////////////
 	// BURN METER REWARD DATA
 	// ///////////////////
-	/*
 	var CreateBurnMeter = ArmoryUtils_ClosureBox(void function(
 		int datatableIndex, string ref, string name, int cost,
 		asset image, asset model, bool hidden
@@ -2539,34 +2526,19 @@ void function InitItems()
 		#endif
 
 		CreateGenericItem( datatableIndex, eItemTypes.BURN_METER_REWARD, ref, name, name, name, image, cost, hidden )
-	}) //*/
+	})
+	Registry_InferFunction( ArmoryUtils_ClosureBox(CreateBurnMeter), eTaskType.FACTORY, "vanilla_pilot_boosts" )
 
-	// jobID = Registry_RPakJob($"datatable/burn_meter_rewards.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
-	// 	ref = BURN_REF_COLUMN_NAME, itemType = eItemTypes.BURN_METER_REWARD, name = BURN_NAME_COLUMN_NAME,
-	// 	desc = BURN_NAME_COLUMN_NAME, isHidden = [eColType.BOOL, "selectable"] })
-	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = BURN_REF_COLUMN_NAME})
+	Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "vanilla_pilot_boosts" )
 
+	var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
+	Registry_InferFunction( InvertHidden, eTaskType.MUTATOR, "vanilla_pilot_boosts" )
 
-	// Registry_ModifyJob( jobID, 0, InvertHidden, {hidden = "selectable"})
+	Registry_InferRPakData( "vanilla_pilot_boosts", $"datatable/burn_meter_rewards.rpak", {
+		ref = ["itemRef"], itemType = eItemTypes.BURN_METER_REWARD, desc = ["name"], hidden = ["selectable", eColType.BOOL]
+	})
 
-	// #if SERVER || CLIENT
-	// var ModelPrecache = ArmoryUtils_ClosureBox(table function(asset model) { PrecacheModel( model ); return {} })
-	// table rpak2args = {}; rpak2args[$"datatable/burn_meter_rewards.rpak"] <- ["model"]
-	// Registry_ModifyJob( jobID, 0, ModelPrecache, rpak2args)
-	// #endif
-
-	// var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
-
-	// Registry_InferFunction( ArmoryUtils_ClosureBox(CreateBurnMeter), eTaskType.FACTORY, "vanilla_pilot_boosts" )
-	// Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "vanilla_pilot_boosts" )
-	// Registry_InferFunction( InvertHidden, eTaskType.MUTATOR, "vanilla_pilot_boosts" )
-
-	// Registry_InferRPakData( "vanilla_pilot_boosts", $"datatable/burn_meter_rewards.rpak", {
-	// 	ref = BURN_REF_COLUMN_NAME, itemType = eItemTypes.BURN_METER_REWARD, name = BURN_NAME_COLUMN_NAME,
-	// 	desc = BURN_NAME_COLUMN_NAME, hidden = "selectable", isHidden = [eColType.BOOL, "selectable"]
-	// })
-
-	//*
+	/*
 	dataTable = GetDataTable( $"datatable/burn_meter_rewards.rpak" )
 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
 	{
