@@ -65,7 +65,7 @@ macro_rules! define_log_level {
 			match $level_str {
 				"INFO"	=> rrplug::prelude::log::info!("{}", last_msg),
 				"WARN"	=> rrplug::prelude::log::warn!("{}", last_msg),
-				"ERROR"	=> rrplug::prelude::log::error!("{}", format.dump_cache.join("\n")),
+				"ERROR"	=> rrplug::prelude::log::error!("{}", last_msg), //format.dump_cache.join("\n")
 				_		=> rrplug::prelude::log::info!("{}", last_msg),
 			}
 

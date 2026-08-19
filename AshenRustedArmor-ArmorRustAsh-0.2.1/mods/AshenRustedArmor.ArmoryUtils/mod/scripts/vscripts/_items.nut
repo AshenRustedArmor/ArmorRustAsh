@@ -566,18 +566,6 @@ struct TaskInfer_Function {
 	var target
 }
 
-//	Intermediate representation for parameter extraction.
-struct TaskStage_Blueprint {
-	string name
-
-	//	Extracted functionality from the target
-	array<string> rawArgs
-	array<var> rawDefs
-	int defsIdx
-
-	//	Destination array used to build parameters
-	array<ParamBinding> destArray
-}
 
 ///	=== CACHE PHASE ===========================================================
 //		Data binding
@@ -597,26 +585,24 @@ struct TaskCache_BindRPak {
 	table overrides
 }
 
-//	Creates / manages bindings for generated data, very WIP. TODO
-struct TaskCache_Generated {
+///	=== STAGE PHASE ===========================================================
+//	Intermediate representation for parameter extraction.
+struct TaskStage_Blueprint {
 	string name
 
-	array<string> argNames
-	table overrides
+	//	Extracted functionality from the target
+	array<string> rawArgs
+	array<var> rawDefs
+	int defsIdx
+
+	//	Destination array used to build parameters
+	array<ParamBinding> destArray
 }
-
-
-//	Consumes bindings to cache data from RPaks
-// struct TaskCache_BindRPak {
-// 	int jobID
-
-// 	asset rpakPath
-// }
 
 ///	=== PATCH PHASE ===========================================================
 //	Ordered tasks with an internal data struct. Necessary for the Mutate phase
 //	where order-of-execution matters a great deal
-struct TaskOrdered {
+struct TaskPatch_Ordered {
 	string name
 	int taskType
 
@@ -627,17 +613,6 @@ struct TaskOrdered {
 	int numRows
 
 	var i
-}
-
-//	Mutate the cache with "table functionref target( ... )"
-struct TaskPatchMutate {
-	var target
-}
-
-//	Generate new data, very WIP. TODO
-struct TaskPatchGenerate {
-	var target
-	// some other stuff too...
 }
 
 ///	=== BUILD PHASE ===========================================================
@@ -667,7 +642,7 @@ struct {
 	array<TaskInfer_Function>	queueInfer_Function		//	Infer Phase
 	array<TaskCache_BindRPak>	queueCache_BindRPak		//	Cache Phase
 	array<TaskStage_Blueprint>	queueStage_Blueprint	//	Stage Phase
-	array<TaskOrdered>			queuePatchAllTasks		//	Patch Phase
+	array<TaskPatch_Ordered>	queuePatchAllTasks		//	Patch Phase
 	array<TaskBuild_ItemData>	queueBuild_ItemData		//	Build Phase
 
 	/// === BINDINGS ==========================================================
@@ -745,7 +720,11 @@ void function RegistryPipelineInit() {
 
 	//	Stats & Booleans
 	inferences.cost				<- CreateParamBinding( "cost",			eColType.INT )
+
 	inferences.hidden			<- CreateParamBinding( "hidden",		eColType.BOOL )
+	inferences.ishidden			<- CreateParamBinding( "hidden",		eColType.BOOL )
+
+	inferences.damagesource		<- CreateParamBinding( "damageSource",	eColType.BOOL )
 	inferences.isdamagesource	<- CreateParamBinding( "damageSource",	eColType.BOOL )
 
 	//	Special Custom Parameters
@@ -764,18 +743,19 @@ ParamBinding function CreateParamBinding( string colName, int dataType, int data
 	return b
 }
 
+
+
 ParamBinding function InferParamBinding( string argName ) {
 	//	Clone from inference
 	ParamBinding b
 	string lower = argName.tolower()
-
-	if (lower in inferences) { b = clone inferences[lower]; }
-	else {
-		b.colName = argName;
+	if (lower in inferences) {
+		b = clone inferences[lower]
 	}
 
-	//	We can always assume the argName is the passed value, override later
 	b.argName = argName
+	if (b.colName == "") { b.colName = argName }
+
 	return b
 }
 
@@ -810,7 +790,6 @@ array<string> function Registry_GetSubNames( string name ) {
 	return subNames
 }
 
-
 TaskStage_Blueprint function Registry_ReflectFunc( var target ) {
 	TaskStage_Blueprint bp
 
@@ -821,7 +800,7 @@ TaskStage_Blueprint function Registry_ReflectFunc( var target ) {
 	if (bp.rawArgs.len() > 0 && bp.rawArgs[0] == "this") { bp.rawArgs.remove(0) }
 
 	array rawDefs = ("defparams" in infos) ? expect array(infos.defparams) : []
-	foreach( d in rawDefs ) { bp.rawDefs.append(expect string(d)); }
+	foreach( d in rawDefs ) { bp.rawDefs.append(d); }
 	bp.defsIdx = bp.rawArgs.len() - bp.rawDefs.len()
 
 	return bp
@@ -870,7 +849,7 @@ void function Registry_InferFunction(
 	}
 
 	//	Initiate and queue task for patching phase
-	TaskOrdered patchTask
+	TaskPatch_Ordered patchTask
 	patchTask.name		= currName
 	patchTask.taskType	= taskType
 	patchTask.target	= target
@@ -967,14 +946,19 @@ void function Registry_CachePhase() {
 	registry.phase++
 
 	table< string, table<string, ParamBinding> > validArgs = {}	//	taskName, {argName, ...}
+	table< string, table<string, ParamBinding> > validCols = {}	//	taskName, {argName, ...}
 	foreach (string subName, array<ParamBinding> bindings in registry.allBindings) {
 		//	Create an index for all subtasks
 		string taskName = Registry_GetTaskName(subName)
-		if (!(taskName in validArgs)) { validArgs[taskName] <- {} }
+		if (!(taskName in validArgs)) {
+			validArgs[taskName] <- {}
+			validCols[taskName] <- {}
+		}
 
 		//	Insert/assign to the same argname is safe
 		foreach (ParamBinding b in bindings) {
 			validArgs[taskName][b.argName] <- b
+			if (b.colName != "") { validCols[taskName][b.colName] <- b; }
 		}
 	}
 
@@ -983,7 +967,7 @@ void function Registry_CachePhase() {
 		//		Retrieve task-specific bindings
 		//	Can't operate on something that isn't indexed
 		if (!(task.name in registry.allBindings)) {
-			Logger_Fatal( "Requested task '{}', which does not exist", task.name)
+			Logger_Fatal( "Requested subtask '{}', which does not exist", task.name)
 		}
 
 		string taskName = Registry_GetTaskName(task.name)
@@ -996,9 +980,10 @@ void function Registry_CachePhase() {
 		//	columns. Alterting developers to typos/missing parameters requires
 		//	checking for usage across all subtasks.
 		foreach (string key, var _ in task.overrides) {
-			if (!(key in validArgs[taskName])) {
-				Logger_Warn( "Task '{}' requested {}#\"{}\" which does not exist", task.name, task.rpakPath, key )
-			}
+			if (key in validArgs[taskName]) { continue; }
+			if (key in validCols[taskName]) { continue; }
+
+			Logger_Warn( "Task '{}' overriding {}#\"{}\", which does not exist", task.name, task.rpakPath, key )
 		}
 
 		//	2).	Apply overrides
@@ -1008,23 +993,30 @@ void function Registry_CachePhase() {
 
 		array<ParamBinding> fromTable = []
 		foreach (ParamBinding b in taskBindings) {
+			//	1). Retrieve parameter name from ParamBinding
+			string paramKey = ""
 			if (b.argName in task.overrides) {
-				var newVal = task.overrides[b.argName]
+			    paramKey = b.argName
+			} else if (b.colName != "" && (b.colName in task.overrides)) {
+				paramKey = b.colName
+			}
+
+			//	2). Apply override from retrieved key
+			if (paramKey != "") {
+				ArmoryLog_Iter(registry.logger, paramKey)
+
+				var newVal = task.overrides[paramKey]
 				switch (typeof(newVal)) {
 					case "array":
 						array arr = expect array(newVal)
-						b.colName = b.argName
 
-						//	Column type override
-						b.dataType = expect int(arr[0])
+						//	arr[0]: column redirection
+						b.colName = expect string(arr[0])
 
-						//	Column name override (optional)
+						//	arr[1]: type setting
 						if (arr.len()< 2) { break; }
-						b.colName = expect string(arr[1])
-						break;
+						b.dataType = expect int(arr[1])
 
-					case "string":
-						b.colName = expect string(newVal)
 						break;
 
 					default:
@@ -1032,18 +1024,23 @@ void function Registry_CachePhase() {
 						b.value = newVal
 						break;
 				}
+			} else {
+				ArmoryLog_Iter(registry.logger, "~")
 			}
 
 			//	3).	Queue datatable dependencies
-			//	Third block, directly links ParamBindings to RPaks
-			if (b.dataSource == eParamSource.DATATABLE) {
-				if (b.colName == "") {
-					Logger_Fatal( "Task '{}' argument '{}' cannot be inferred from '{}'. Missing override?", task.name, b.argName, task.rpakPath )
-				}
+			//	Can safely skip non-datatable bindings
+			if (b.dataSource != eParamSource.DATATABLE) { continue; }
 
-				fromTable.append(b)
+			//	Missing column name indicates no inference match
+			if (b.colName == "") {
+				Logger_Fatal( "Task '{}' argument '{}' cannot be inferred from '{}'. Missing override?\n[%I{, }]", task.name, b.argName, task.rpakPath )
 			}
+
+			fromTable.append(b)
 		}
+
+		Logger_Info("Task '{}' bindings cached: [%I{, }]", task.name)
 
 		//	Patch over rpakBindings
 		if( task.rpakPath in registry.rpakBindings ) {
@@ -1142,7 +1139,7 @@ void function Registry_CachePhase() {
 
 		//		Save to central state
 		registry.cache[task.rpakPath] <- rpak
-		Logger_Info( "Task '{}' cached RPak {} ({} rows)", task.name, task.rpakPath, numRows )
+		Logger_Info( "Task '{}' cached RPak {} ({} rows): [%I{, }]", task.name, task.rpakPath, numRows )
 	}
 
 	//		Clear queues
@@ -1202,7 +1199,7 @@ void function Registry_PatchPhase() {
 	//		1).	Verification
 	//	Verify patch bindings independently, seperate from patch application
 	//	Individual patches won't use all bindings assigned to a single job.
-	foreach (TaskOrdered task in registry.queuePatchAllTasks) {
+	foreach (TaskPatch_Ordered task in registry.queuePatchAllTasks) {
 		//		Retrieve bindings based on task type
 		//	Switching the source table allows for one inclusion check
 		table< string, array<ParamBinding> > srcTable
@@ -1253,7 +1250,7 @@ void function Registry_PatchPhase() {
 	}
 
 	//		2).	Data Initialization
-	foreach (TaskOrdered task in registry.queuePatchAllTasks) {
+	foreach (TaskPatch_Ordered task in registry.queuePatchAllTasks) {
 		//		Retrieve bindings based on task type
 		//	Switching the source table allows for one inclusion check
 		table< string, array<ParamBinding> > srcTable
@@ -1315,7 +1312,7 @@ void function Registry_PatchPhase() {
 	}
 
 	//		3).	Application
-	foreach (TaskOrdered task in registry.queuePatchAllTasks) {
+	foreach (TaskPatch_Ordered task in registry.queuePatchAllTasks) {
 		//		Sanity checks
 		//	Skip tasks which haven't had their data filled out
 		// if (typeof(task.i) != "table") {
@@ -1376,15 +1373,15 @@ void function Registry_PatchPhase() {
 					//	Mutate existing tracked state in-line
 					table resTable = expect table( result )
 					foreach (ParamBinding b in funcBindings) {
-						if ( b.dataSource == eParamSource.DATATABLE || (b.dataSource == eParamSource.GENERATED && (b.argName in resTable)) ) {
-							(expect array(b.value))[r] = resTable[b.argName]
+						if ((b.argName in resTable) && (b.dataSource == eParamSource.DATATABLE || b.dataSource == eParamSource.GENERATED)) {
+							(expect array(b.value))[r] = resTable[b.argName] // breaks here
 						}
 					}
 
 					break;
 				case eTaskType.GENERATOR:
 					//	Raise fatal error if call fails
-					if (result == null || typeof(result) != "table") {
+					if (result == null || typeof(result) != "array") {
 						if (numRows == 0) { Logger_Fatal( "Generator '{}' expected array of tables, got {}", task.name, typeof(result) ) }
 						Logger_Fatal( "Generator '{}' row %d expected array of tables, got {}", task.name, r, typeof(result) )
 					}
@@ -1478,7 +1475,7 @@ void function Registry_ExecutePipeline() {
 	//	Topological sort
 	array<string> sortedNames = ArmoryUtils_TopoSortSafe( registry.topoID )
 
-	table<string, TaskOrdered> patchMap = {}
+	table<string, TaskPatch_Ordered> patchMap = {}
 	foreach (task in registry.queuePatchAllTasks) {
 		patchMap[task.name] <- task
 	}
@@ -1660,24 +1657,22 @@ void function InitItems()
 
 	SetupWeaponSkinData()
 
-	// Registry_RPakJob( $"datatable/pilot_abilities.rpak", ArmoryUtils_ClosureBox(CreateWeaponData), {
-	// 	ref="itemRef"})
+	//	SCRIPT ERROR: [UI] The index "mp_ability_grapple" does not exist
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "vanilla_pilot_abilities")
+	Registry_InferRPakData( "vanilla_pilot_abilities", $"datatable/pilot_abilities.rpak", { ref = ["itemRef"] })
 
-	// Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "vanilla_pilot_abilities")
-	// Registry_InferRPakData( "vanilla_pilot_abilities", $"datatable/pilot_abilities.rpak", { ref = "itemRef" })
+	// dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
+	// 	bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	dataTable = GetDataTable( $"datatable/pilot_abilities.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-		int itemType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-		bool isDamageSource = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "damageSource" ) )
-		bool hidden = GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-		CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
-	}
+	// 	CreateWeaponData( i, itemType, hidden, itemRef, isDamageSource, cost )
+	// }
 
 	// //////////////////////
 	// PILOT MODS/ATTACHMENTS
@@ -1782,49 +1777,49 @@ void function InitItems()
 	/// //////////////////
 	/// PILOT PASSIVE DATA
 	/// //////////////////
-	// Registry_RPakJob( $"datatable/pilot_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-	// 	ref="passive" })
+	Registry_InferFunction( ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_passives" )
+	Registry_InferRPakData( "vanilla_pilot_passives", $"datatable/pilot_passives.rpak", { ref = ["passive"] } )
 
-	dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef      = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "passive" ) )
-		int itemType        = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-		string name			= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-		string description	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
-		asset image			= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-		bool hidden			= GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
-		int cost			= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// dataTable = GetDataTable( $"datatable/pilot_passives.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef      = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "passive" ) )
+	// 	int itemType        = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	string name			= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	string description	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "description" ) )
+	// 	asset image			= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	bool hidden			= GetDataTableBool( dataTable, i, GetDataTableColumnByName( dataTable, "hidden" ) )
+	// 	int cost			= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-		CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
-	}
-
+	// 	CreatePassiveData( i, itemType, hidden, itemRef, name, description, description, image, cost )
+	// }
 
 	/// //////////////////
 	/// SUIT DATA
 	/// //////////////////
 
 	// Suits
-	// Registry_RPakJob( $"datatable/pilot_properties.rpak", ArmoryUtils_ClosureBox(CreatePilotSuitData), {
-	// 	ref="type", itemType=eItemTypes.PILOT_SUIT })
-
-	//Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_pilot_suits")
-	//Registry_InferRPakData( "vanilla_pilot_suits", $"datatable/pilot_passives.rpak", { ref = "type" })
-
-	dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
-		asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-		int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-		CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
-	}
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePilotSuitData), eTaskType.FACTORY, "vanilla_pilot_models")
+	Registry_InferRPakData( "vanilla_pilot_models", $"datatable/pilot_properties.rpak", {
+		ref = ["type"], itemType = eItemTypes.PILOT_SUIT
+	})
 
 	CreateBaseItemData( eItemTypes.RACE, "race_human_male", false )
 	CreateBaseItemData( eItemTypes.RACE, "race_human_female", false )
+
+	// dataTable = GetDataTable( $"datatable/pilot_properties.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef	= GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) )
+	// 	asset image		= GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost		= GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	CreatePilotSuitData( i, eItemTypes.PILOT_SUIT, itemRef, image, cost )
+	// }
+
+
 
 	//	Executions
 	var FilterDisabledRef = ArmoryUtils_ClosureBox(table function( string ref ) {
@@ -1889,64 +1884,70 @@ void function InitItems()
 	///	========================================
 	///			MP features + playlist
 	///	========================================
-	// array<int> featState = [0]
-	// var CreateMpFeature = ArmoryUtils_ClosureBox(void function(
-	// 	string featureRef, string featureName, string featureDesc,
-	// 	asset featureIcon, int cost, string specificType
-	// ) : (featState) {
-	// 	ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, featureRef, featureName, featureDesc, "", featureIcon, cost, false )
-	// 	featureItem.i.specificType <- specificType
-	// 	featState[0]++
-	// })
+	array<int> featState = [0]
+	var CreateMpFeature = ArmoryUtils_ClosureBox(void function(
+		string featureRef, string featureName, string featureDesc,
+		asset image, int cost, string specificType
+	) : (featState) {
+		ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, featureRef, featureName, featureDesc, "", image, cost, false )
+		featureItem.i.specificType <- specificType
+		featState[0]++
+	})
 
-	// var CreatePlaylistItem = ArmoryUtils_ClosureBox(void function(
-	// 	string playlist, string name, asset image, int cost
-	// ) : (featState) {
-	// 	ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, playlist, name, "", "", image, cost, false )
-	// 	featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
-	// 	featureItem.i.isPlaylist <- true
+	var CreatePlaylistItem = ArmoryUtils_ClosureBox(void function(
+		string playlist, string name, asset image, int cost
+	) : (featState) {
+		ItemData featureItem = CreateGenericItem( featState[0], eItemTypes.FEATURE, playlist, name, "", "", image, cost, false )
+		featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
+		featureItem.i.isPlaylist <- true
 
-	// 	featState[0]++
-	// })
+		featState[0]++
+	})
 
 	// Registry_RPakJob( $"datatable/features_mp.rpak", CreateMpFeature, {featureIcon = [eColType.ASSET]})
 	// Registry_RPakJob( $"datatable/playlist_items.rpak", CreatePlaylistItem, {image = [eColType.ASSET]})
 
-	dataTable = GetDataTable( $"datatable/features_mp.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	int featureIndex = 0
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
-		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
-		string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
-		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-		string specificType = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "specificType" ) )
+	Registry_InferFunction( CreateMpFeature, eTaskType.FACTORY, "vanilla_mp_features" )
+	Registry_InferRPakData( "vanilla_mp_features", $"datatable/features_mp.rpak", { image = ["featureIcon", eColType.ASSET] } )
 
-		const bool IS_HIDDEN_ARG = false
-		ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
-		featureItem.i.specificType <- specificType
+	Registry_InferFunction( CreatePlaylistItem, eTaskType.FACTORY, "vanilla_mp_gamemodes", [], ["vanilla_mp_features_000"] )
+	Registry_InferRPakData( "vanilla_mp_gamemodes", $"datatable/playlist_items.rpak", { image = ["image", eColType.ASSET] } )
 
-		featureIndex++
-	}
+	// dataTable = GetDataTable( $"datatable/features_mp.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// int featureIndex = 0
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
+	// 	string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 	string specificType = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "specificType" ) )
 
-	dataTable = GetDataTable( $"datatable/playlist_items.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string playlistRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "playlist" ) )
-		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
-		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 	const bool IS_HIDDEN_ARG = false
+	// 	ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+	// 	featureItem.i.specificType <- specificType
 
-		const bool IS_HIDDEN_ARG = false
-		ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, playlistRef, name, "", "", image, cost, IS_HIDDEN_ARG )
-		featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
-		featureItem.i.isPlaylist <- true
+	// 	featureIndex++
+	// }
 
-		featureIndex++
-	}
+	// dataTable = GetDataTable( $"datatable/playlist_items.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string playlistRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "playlist" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "name" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "image" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	const bool IS_HIDDEN_ARG = false
+	// 	ItemData featureItem = CreateGenericItem( featureIndex, eItemTypes.FEATURE, playlistRef, name, "", "", image, cost, IS_HIDDEN_ARG )
+	// 	featureItem.i.specificType <- "#ITEM_TYPE_PLAYLIST"
+	// 	featureItem.i.isPlaylist <- true
+
+	// 	featureIndex++
+	// }
 
 	// {
 	// 	int featureIndex = 0
@@ -1976,72 +1977,113 @@ void function InitItems()
 	// ///////////////////
 	// PILOT SECONDARY MOD SLOTS
 	// ///////////////////
-	dataTable = GetDataTable( $"datatable/pilot_weapon_features.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
-		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
-		string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
-		asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-		int dataTableIndex = i
-		const bool IS_HIDDEN_ARG = false
-		CreateGenericItem( dataTableIndex, eItemTypes.WEAPON_FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
-	}
+	/*
+		[SCRIPT SV] [info] SCRIPT ERROR: [SERVER] The index "primarymod2" does not exist
+		[SCRIPT SV] [info]  -> CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
+		[SCRIPT SV] [info]
+		CALLSTACK
+		*FUNCTION [InitItems()] _items.nut line [2011]
+		*FUNCTION [Shared_Lobby_Init()] mp/_mp_sh_init.gnut line [40]
+		*FUNCTION [SPMP_Shared_Init()] mp/_mp_sh_init.gnut line [25]
+		*FUNCTION [SPMP_MapSpawn_Init()] mp/_mp_mapspawn.gnut line [64]
+		*FUNCTION [CodeCallback_MapSpawn()] _mapspawn.gnut line [188]
+	*/
 
-	dataTable = GetDataTable( $"datatable/pilot_weapons.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string weaponRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
-		int weaponType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
-		if ( weaponType == eItemTypes.PILOT_PRIMARY )
-		{
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod3", file.itemData[ "primarymod3" ].cost )
-		}
-		else
-		{
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod2", file.itemData[ "secondarymod2" ].cost )
-			CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod3", file.itemData[ "secondarymod3" ].cost )
-		}
-	}
+	var AttachmentSlotsGenerate = ArmoryUtils_ClosureBox(array function( string itemRef, string type ) {
+		bool primary = eItemTypes[type] == eItemTypes.PILOT_PRIMARY
+		string m2 = primary ? "primarymod2" : "secondarymod2"
+		string m3 = primary ? "primarymod3" : "secondarymod3"
+
+		return [
+			{parentRef = itemRef, itemRef = m2},
+			{parentRef = itemRef, itemRef = m3}
+		]
+	})
+
+	var AttachmentSlotsModify = ArmoryUtils_ClosureBox(table function( string itemRef ) {
+		table out = { cost = 0, itemType = eItemTypes.WEAPON_FEATURE }
+		if (itemRef in file.itemData) { out.cost = file.itemData[itemRef].cost }
+		return out
+	})
+
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateGenericItem), eTaskType.FACTORY, "vanilla_pilot_weapon_features")
+	Registry_InferRPakData("vanilla_pilot_weapon_features", $"datatable/pilot_weapon_features.rpak", {
+		ref = ["featureRef"], name = ["featureName"], description = ["featureDesc"], image = ["featureIcon", eColType.ASSET]
+		itemType = eItemTypes.WEAPON_FEATURE, longdesc = "", isHidden = false
+	})
+
+	Registry_InferFunction(AttachmentSlotsGenerate, eTaskType.GENERATOR, "vanilla_pilot_attachments")
+	Registry_InferFunction(AttachmentSlotsModify, eTaskType.MUTATOR, "vanilla_pilot_attachments")
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateGenericSubItemData), eTaskType.FACTORY, "vanilla_pilot_attachments")
+	Registry_InferRPakData("vanilla_pilot_attachments", $"datatable/pilot_weapons.rpak", { parentRef = ["itemRef"], t = {} })
+
+	// dataTable = GetDataTable( $"datatable/pilot_weapon_features.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string featureRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureRef" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureName" ) )
+	// 	string desc = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "featureDesc" ) )
+	// 	asset image = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "featureIcon" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 	int dataTableIndex = i
+	// 	const bool IS_HIDDEN_ARG = false
+	// 	CreateGenericItem( dataTableIndex, eItemTypes.WEAPON_FEATURE, featureRef, name, desc, "", image, cost, IS_HIDDEN_ARG )
+	// }
+
+	// dataTable = GetDataTable( $"datatable/pilot_weapons.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string weaponRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "itemRef" ) )
+	// 	int weaponType = eItemTypes[ GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "type" ) ) ]
+	// 	if ( weaponType == eItemTypes.PILOT_PRIMARY )
+	// 	{
+	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod2", file.itemData[ "primarymod2" ].cost )
+	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "primarymod3", file.itemData[ "primarymod3" ].cost )
+	// 	}
+	// 	else
+	// 	{
+	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod2", file.itemData[ "secondarymod2" ].cost )
+	// 		CreateGenericSubItemData( eItemTypes.WEAPON_FEATURE, weaponRef, "secondarymod3", file.itemData[ "secondarymod3" ].cost )
+	// 	}
+	// }
 
 	// ///////////////////
 	// FACTION DATA # NOT THIS
 	// ///////////////////
-	// var CreateFaction = ArmoryUtils_ClosureBox(void function(
-	// 	int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
-	// ) {
-	// 	ItemData item = CreateBaseItemData( eItemTypes.FACTION, persistenceRef, false )
-	// 	item.name = factionName
+	var CreateMpFaction = ArmoryUtils_ClosureBox(void function(
+		int dataTableIndex, string persistenceRef, string factionName, asset logo, int cost
+	) {
+		ItemData item = CreateBaseItemData( eItemTypes.FACTION, persistenceRef, false )
+		item.name = factionName
 
-	// 	item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
-	// 	item.image = logo
-	// 	item.cost = cost
-
-	// 	item.persistenceId = dataTableIndex
-	// })
-	// Registry_RPakJob( $"datatable/faction_leaders.rpak", CreateFaction, {
-	// 	logo = [ eColType.ASSET ] })
-
-	dataTable = GetDataTable( $"datatable/faction_leaders.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string factionRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "persistenceRef" ) )
-		asset logo = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "logo" ) )
-		string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "factionName" ) )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-		ItemData item = CreateBaseItemData( eItemTypes.FACTION, factionRef, false )
-		item.image = logo
-		item.name = name
-		item.cost = cost
 		item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
-		item.persistenceId = i
-	}
+		item.image = logo
+		item.cost = cost
+
+		item.persistenceId = dataTableIndex
+	})
+
+	Registry_InferFunction( CreateMpFaction, eTaskType.FACTORY, "vanilla_mp_factions" )
+	Registry_InferRPakData( "vanilla_mp_factions", $"datatable/faction_leaders.rpak", { logo = ["logo", eColType.ASSET] })
+
+	// dataTable = GetDataTable( $"datatable/faction_leaders.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string factionRef = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "persistenceRef" ) )
+	// 	asset logo = GetDataTableAsset( dataTable, i, GetDataTableColumnByName( dataTable, "logo" ) )
+	// 	string name = GetDataTableString( dataTable, i, GetDataTableColumnByName( dataTable, "factionName" ) )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
+
+	// 	ItemData item = CreateBaseItemData( eItemTypes.FACTION, factionRef, false )
+	// 	item.image = logo
+	// 	item.name = name
+	// 	item.cost = cost
+	// 	item.imageAtlas = IMAGE_ATLAS_FACTION_LOGO
+	// 	item.persistenceId = i
+	// }
 
 	// ///////////////
 	// TITAN MOD DATA
@@ -2089,55 +2131,46 @@ void function InitItems()
 	/// ====================================================
 	/// 				TITAN PASSIVE DATA
 	/// ====================================================
-	//	Causes error '[SERVER] Persistent data not available.'
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_titan_passives")
+	Registry_InferRPakData("vanilla_titan_passives", $"datatable/titan_passives.rpak", { ref = ["passive"] })
 
-	// Registry_RPakJob( $"datatable/titan_passives.rpak", ArmoryUtils_ClosureBox(CreatePassiveData), {
-	// 	ref = TITAN_PASSIVE_COLUMN,
-	// 	itemType = TITAN_PASSIVE_TYPE_COLUMN,
-	//	name = TITAN_PASSIVE_NAME_COLUMN
-	// 	desc = TITAN_PASSIVE_DESCRIPTION_COLUMN,
-	// 	longdesc = TITAN_PASSIVE_LONGDESCRIPTION_COLUMN
-	//	image = TITAN_PASSIVE_IMAGE_COLUMN
-	// 	hidden = TITAN_PASSIVE_HIDDEN_COLUMN
-	// })
+	// dataTable = GetDataTable( $"datatable/titan_passives.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef = GetDataTableString( dataTable, i, TITAN_PASSIVE_COLUMN )
+	// 	int itemType = eItemTypes[ GetDataTableString( dataTable, i, TITAN_PASSIVE_TYPE_COLUMN ) ]
+	// 	string name = GetDataTableString( dataTable, i, TITAN_PASSIVE_NAME_COLUMN )
+	// 	string description = GetDataTableString( dataTable, i, TITAN_PASSIVE_DESCRIPTION_COLUMN )
+	// 	string longDescription = GetDataTableString( dataTable, i, TITAN_PASSIVE_LONGDESCRIPTION_COLUMN )
+	// 	asset image = GetDataTableAsset( dataTable, i, TITAN_PASSIVE_IMAGE_COLUMN )
+	// 	bool hidden = GetDataTableBool( dataTable, i, TITAN_PASSIVE_HIDDEN_COLUMN )
+	// 	int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
 
-	dataTable = GetDataTable( $"datatable/titan_passives.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef = GetDataTableString( dataTable, i, TITAN_PASSIVE_COLUMN )
-		int itemType = eItemTypes[ GetDataTableString( dataTable, i, TITAN_PASSIVE_TYPE_COLUMN ) ]
-		string name = GetDataTableString( dataTable, i, TITAN_PASSIVE_NAME_COLUMN )
-		string description = GetDataTableString( dataTable, i, TITAN_PASSIVE_DESCRIPTION_COLUMN )
-		string longDescription = GetDataTableString( dataTable, i, TITAN_PASSIVE_LONGDESCRIPTION_COLUMN )
-		asset image = GetDataTableAsset( dataTable, i, TITAN_PASSIVE_IMAGE_COLUMN )
-		bool hidden = GetDataTableBool( dataTable, i, TITAN_PASSIVE_HIDDEN_COLUMN )
-		int cost = GetDataTableInt( dataTable, i, GetDataTableColumnByName( dataTable, "cost" ) )
-
-		CreatePassiveData( i, itemType, hidden, itemRef, name, description, longDescription, image, cost )
-	}
+	// 	CreatePassiveData( i, itemType, hidden, itemRef, name, description, longDescription, image, cost )
+	// }
 
 	// ///////////////////
 	// TITAN OS DATA
 	// ///////////////////
-	// Registry_RPakJob( $"datatable/titan_voices.rpak", ArmoryUtils_ClosureBox(CreateGenericItem), {
-	// 	ref = TITAN_VOICE_COLUMN, name = TITAN_VOICE_NAME_COLUMN,
-	// 	itemType = eItemTypes.TITAN_OS, cost = 0, isHidden = false
-	// })
+	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateGenericItem), eTaskType.FACTORY, "vanilla_titan_voices")
+	Registry_InferRPakData( "vanilla_titan_voices", $"datatable/titan_voices.rpak", {
+		ref = ["weapon"], itemType = eItemTypes.TITAN_OS, cost = 0, isHidden = false
+	})
 
-	dataTable = GetDataTable( $"datatable/titan_voices.rpak" )
-	numRows = GetDatatableRowCount( dataTable )
-	for ( int i = 0; i < numRows; i++ )
-	{
-		string itemRef = GetDataTableString( dataTable, i, TITAN_VOICE_COLUMN )
-		string name = GetDataTableString( dataTable, i, TITAN_VOICE_NAME_COLUMN )
-		string description = GetDataTableString( dataTable, i, TITAN_VOICE_DESCRIPTION_COLUMN )
-		asset image = GetDataTableAsset( dataTable, i, TITAN_VOICE_IMAGE_COLUMN )
-		bool hidden = GetDataTableBool( dataTable, i, TITAN_VOICE_HIDDEN_COLUMN )
+	// dataTable = GetDataTable( $"datatable/titan_voices.rpak" )
+	// numRows = GetDatatableRowCount( dataTable )
+	// for ( int i = 0; i < numRows; i++ )
+	// {
+	// 	string itemRef = GetDataTableString( dataTable, i, TITAN_VOICE_COLUMN )
+	// 	string name = GetDataTableString( dataTable, i, TITAN_VOICE_NAME_COLUMN )
+	// 	string description = GetDataTableString( dataTable, i, TITAN_VOICE_DESCRIPTION_COLUMN )
+	// 	asset image = GetDataTableAsset( dataTable, i, TITAN_VOICE_IMAGE_COLUMN )
+	// 	bool hidden = GetDataTableBool( dataTable, i, TITAN_VOICE_HIDDEN_COLUMN )
 
-		const bool IS_HIDDEN_ARG = false
-		CreateGenericItem( i, eItemTypes.TITAN_OS, itemRef, name, description, description, image, 0, IS_HIDDEN_ARG )
-	}
+	// 	const bool IS_HIDDEN_ARG = false
+	// 	CreateGenericItem( i, eItemTypes.TITAN_OS, itemRef, name, description, description, image, 0, IS_HIDDEN_ARG )
+	// }
 
 	// var BakeTitan = ArmoryUtils_ClosureBox(void function(
 	// 	int dataTableIndex, string titanRef, int cost, asset image, asset coreIcon, string name, string desc, string propertiesDesc,
@@ -2376,89 +2409,87 @@ void function InitItems()
 
 
 	/// =========== Persona customization ============
-	// var PlayerProfileCreate = ArmoryUtils_ClosureBox(void function(
-	// 	int dataTableIndex, int itemType, string ref, string name, asset image, int cost, bool hidden,
-	// ) {
-	// 	CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, hidden )
-	// 	GetItemData( ref ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
-	// })
+	var PlayerProfileCreate = ArmoryUtils_ClosureBox(void function(
+		int dataTableIndex, int itemType, string ref, string name,
+		asset image, int cost, bool hidden,
+	) {
+		CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, hidden )
+		GetItemData( ref ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+	})
 
-	// var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool hidden ) {
-	// 	return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, hidden = (cost < 0), cost = max(cost, 0) }
-	// })
+	var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool hidden ) {
+		return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, hidden = (cost < 0), cost = max(cost, 0) }
+	})
 
-	// jobID = Registry_RPakJob( $"datatable/calling_cards.rpak", PlayerProfileCreate, {
-	// 	itemType = eItemTypes.CALLING_CARD,
-	// 	ref = CALLING_CARD_REF_COLUMN_NAME,
-	// 	name = CALLING_CARD_NAME_COLUMN_NAME,
-	// 	image = CALLING_CARD_IMAGE_COLUMN_NAME,
-	// 	hidden = false
-	// })
-	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = CALLING_CARD_REF_COLUMN_NAME})
-	// Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = CALLING_CARD_REF_COLUMN_NAME})
+	Registry_InferFunction( PlayerProfileCreate,	eTaskType.FACTORY,	"vanilla_profile_banners" )
+	Registry_InferFunction( PlayerProfileCreate,	eTaskType.FACTORY,	"vanilla_profile_icons" )
 
-	// jobID = Registry_RPakJob( $"datatable/callsign_icons.rpak", PlayerProfileCreate, {
-	// 	itemType = eItemTypes.CALLSIGN_ICON,
-	// 	ref = CALLSIGN_ICON_REF_COLUMN_NAME
-	// 	name = CALLSIGN_ICON_NAME_COLUMN_NAME,
-	// 	image = CALLSIGN_ICON_IMAGE_COLUMN_NAME,
-	// 	hidden = false
-	// })
-	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = CALLSIGN_ICON_REF_COLUMN_NAME})
-	// Registry_ModifyJob( jobID, 0, PlayerProfileValidate, {ref = CALLSIGN_ICON_REF_COLUMN_NAME})
+	Registry_InferFunction( FilterDisabledRef,		eTaskType.MUTATOR,	"vanilla_profile_banners" )
+	Registry_InferFunction( FilterDisabledRef,		eTaskType.MUTATOR,	"vanilla_profile_icons" )
 
-	{
-		var dataTable = GetDataTable( $"datatable/calling_cards.rpak" )
-		for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
-		{
-			string cardRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_REF_COLUMN_NAME ) )
-			string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_NAME_COLUMN_NAME ) )
-			asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_IMAGE_COLUMN_NAME ) )
-			int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
-			bool isHidden = false
-			if ( cost < 0 )
-			{
-				isHidden = true
-				cost = 0
-			}
+	Registry_InferFunction( PlayerProfileValidate,	eTaskType.MUTATOR,	"vanilla_profile_banners" )
+	Registry_InferFunction( PlayerProfileValidate,	eTaskType.MUTATOR,	"vanilla_profile_icons" )
 
-			string desc = "Undefined"
-			string longdesc = "Undefined"
+	Registry_InferRPakData( "vanilla_profile_banners", $"datatable/calling_cards.rpak", {
+		ref = ["itemRef"], itemType = eItemTypes.CALLING_CARD, hidden = false
+	})
 
-			int datatableIndex = row
+	Registry_InferRPakData( "vanilla_profile_icons", $"datatable/callsign_icons.rpak", {
+		ref = ["itemRef"], itemType = eItemTypes.CALLSIGN_ICON, hidden = false
+	})
 
-			CreateGenericItem( datatableIndex, eItemTypes.CALLING_CARD, cardRef, name, desc, longdesc, image, cost, isHidden )
-			GetItemData( cardRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
-		}
-	}
+	// {
+	// 	var dataTable = GetDataTable( $"datatable/calling_cards.rpak" )
+	// 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
+	// 	{
+	// 		string cardRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_REF_COLUMN_NAME ) )
+	// 		string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_NAME_COLUMN_NAME ) )
+	// 		asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLING_CARD_IMAGE_COLUMN_NAME ) )
+	// 		int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 		bool isHidden = false
+	// 		if ( cost < 0 )
+	// 		{
+	// 			isHidden = true
+	// 			cost = 0
+	// 		}
 
-	{
-		var dataTable = GetDataTable( $"datatable/callsign_icons.rpak" )
-		for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
-		{
-			string iconRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_REF_COLUMN_NAME ) )
-			string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_NAME_COLUMN_NAME ) )
-			asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_IMAGE_COLUMN_NAME ) )
-			int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
-			bool isHidden = false
-			if ( cost < 0 )
-			{
-				isHidden = true
-				cost = 0
-			}
+	// 		string desc = "Undefined"
+	// 		string longdesc = "Undefined"
 
-			string desc = "Undefined"
-			string longdesc = "Undefined"
+	// 		int datatableIndex = row
 
-			int datatableIndex = row
+	// 		CreateGenericItem( datatableIndex, eItemTypes.CALLING_CARD, cardRef, name, desc, longdesc, image, cost, isHidden )
+	// 		GetItemData( cardRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+	// 	}
+	// }
 
-			if ( IsDisabledRef( iconRef ) )
-				continue
+	// {
+	// 	var dataTable = GetDataTable( $"datatable/callsign_icons.rpak" )
+	// 	for ( int row = 0; row < GetDatatableRowCount( dataTable ); row++ )
+	// 	{
+	// 		string iconRef = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_REF_COLUMN_NAME ) )
+	// 		string name = GetDataTableString( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_NAME_COLUMN_NAME ) )
+	// 		asset image = GetDataTableAsset( dataTable, row, GetDataTableColumnByName( dataTable, CALLSIGN_ICON_IMAGE_COLUMN_NAME ) )
+	// 		int cost = GetDataTableInt( dataTable, row, GetDataTableColumnByName( dataTable, "cost" ) )
+	// 		bool isHidden = false
+	// 		if ( cost < 0 )
+	// 		{
+	// 			isHidden = true
+	// 			cost = 0
+	// 		}
 
-			CreateGenericItem( datatableIndex, eItemTypes.CALLSIGN_ICON, iconRef, name, desc, longdesc, image, cost, isHidden )
-			GetItemData( iconRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
-		}
-	}
+	// 		string desc = "Undefined"
+	// 		string longdesc = "Undefined"
+
+	// 		int datatableIndex = row
+
+	// 		if ( IsDisabledRef( iconRef ) )
+	// 			continue
+
+	// 		CreateGenericItem( datatableIndex, eItemTypes.CALLSIGN_ICON, iconRef, name, desc, longdesc, image, cost, isHidden )
+	// 		GetItemData( iconRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+	// 	}
+	// }
 
 	// ///////////////////
 	// NON-LOADOUT WEAPONS
@@ -2515,7 +2546,7 @@ void function InitItems()
 	// 	desc = BURN_NAME_COLUMN_NAME, isHidden = [eColType.BOOL, "selectable"] })
 	// Registry_ModifyJob( jobID, 0, FilterDisabledRef, {ref = BURN_REF_COLUMN_NAME})
 
-	// var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
+
 	// Registry_ModifyJob( jobID, 0, InvertHidden, {hidden = "selectable"})
 
 	// #if SERVER || CLIENT
@@ -2523,6 +2554,17 @@ void function InitItems()
 	// table rpak2args = {}; rpak2args[$"datatable/burn_meter_rewards.rpak"] <- ["model"]
 	// Registry_ModifyJob( jobID, 0, ModelPrecache, rpak2args)
 	// #endif
+
+	// var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
+
+	// Registry_InferFunction( ArmoryUtils_ClosureBox(CreateBurnMeter), eTaskType.FACTORY, "vanilla_pilot_boosts" )
+	// Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "vanilla_pilot_boosts" )
+	// Registry_InferFunction( InvertHidden, eTaskType.MUTATOR, "vanilla_pilot_boosts" )
+
+	// Registry_InferRPakData( "vanilla_pilot_boosts", $"datatable/burn_meter_rewards.rpak", {
+	// 	ref = BURN_REF_COLUMN_NAME, itemType = eItemTypes.BURN_METER_REWARD, name = BURN_NAME_COLUMN_NAME,
+	// 	desc = BURN_NAME_COLUMN_NAME, hidden = "selectable", isHidden = [eColType.BOOL, "selectable"]
+	// })
 
 	//*
 	dataTable = GetDataTable( $"datatable/burn_meter_rewards.rpak" )
