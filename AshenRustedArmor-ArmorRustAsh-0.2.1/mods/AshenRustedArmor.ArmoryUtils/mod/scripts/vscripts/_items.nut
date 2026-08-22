@@ -1171,7 +1171,14 @@ void function Registry_StagePhase() {
 
 						array arr = expect array(b.value)
 						string typeStr = expect string( arr[r] )
-						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
+
+						if (typeStr in eItemTypes) {
+							//Logger_Info( "Task '{}' resolving eItemType '{}'", task.name, typeStr )
+							return eItemTypes[ typeStr ]
+						}
+
+						Logger_Warn( "Task '{}' could not resolve eItemType '{}', skipping", task.name, typeStr )
+						return "PIPELINE_SKIP"
 					}; break; }
 
 					b.Get = var function( int r ) : (b, task) {
@@ -1448,7 +1455,10 @@ void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 			bool skipRow = false
 			foreach ( ParamBinding b in bindings ) {
 				var val = b.Get(r)
-				if (typeof(val)=="string" && val == "PIPELINE_SKIP") { skipRow = true; break; }
+				if (typeof(val)=="string" && val == "PIPELINE_SKIP") {
+					Logger_Info("Task '{}' skipping row...", task.name)
+					skipRow = true; break;
+				}
 				args.append(val)
 			}
 
@@ -2115,7 +2125,9 @@ void function InitItems()
 	/// 				TITAN PASSIVE DATA	//	ISSUE - PERSISTENCE
 	/// ====================================================
 	// Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "vanilla_titan_passives")
-	// Registry_InferRPakData("vanilla_titan_passives", $"datatable/titan_passives.rpak", { ref = ["passive"] })
+	// Registry_InferRPakData("vanilla_titan_passives", $"datatable/titan_passives.rpak", {
+	// 	ref = ["passive"], hidden = false
+	// })
 
 	//*
 	dataTable = GetDataTable( $"datatable/titan_passives.rpak" )
@@ -2158,6 +2170,75 @@ void function InitItems()
 	} //*/
 
 	// Registry_ExecutePipeline()
+
+	/// ====================================================
+	/// 				TITAN LOADOUT DATA	//
+	/// ====================================================
+	// Registry_InferFunction(ArmoryUtils_ClosureBox(CreateTitanData), eTaskType.FACTORY, "vanilla_titans")
+	// Registry_InferRPakData("vanilla_titans", $"datatable/titans_mp.rpak", {
+	// 	coreIcon = ["coreIcon", eColType.ASSET]
+	// })
+
+	// var TitanModelPrecache = ArmoryUtils_ClosureBox(table function(
+	// 	string titanRef, string setFile, string primeSetFile
+	// ) {
+	// 	#if SERVER || CLIENT
+	// 	PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
+	// 	PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
+	// 	if ( primeSetFile != "" ) {
+	// 		PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
+	// 		PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
+	// 	}
+	// 	#endif
+
+	// 	return {}
+	// })
+
+	// Registry_InferFunction(TitanModelPrecache, eTaskType.MUTATOR, "vanilla_titan_models", ["vanilla_titans_000"])
+	// Registry_InferRPakData("vanilla_titan_models", $"datatable/titans_mp.rpak")
+	// Registry_InferRPakData("vanilla_titan_models", $"datatable/titan_properties.rpak")
+
+	// var GenerateTitanCamos = ArmoryUtils_ClosureBox(array function(
+	// 	string titanRef, string camoRef, string titanCamoRef,
+	// 	int titanWeaponCost, int titanCost, int categoryId
+	// ) {	return [
+	// 		{ itemType = eItemTypes.CAMO_SKIN,			parentRef = titanRef,	itemRef = camoRef,		cost = titanWeaponCost,	specificData = { categoryId = categoryId } },
+	// 		{ itemType = eItemTypes.CAMO_SKIN_TITAN,	parentRef = titanRef,	itemRef = titanCamoRef,	cost = titanCost,		specificData = { categoryId = categoryId } }
+	// 	]
+	// })
+
+	// Registry_InferFunction(GenerateTitanCamos, eTaskType.GENERATOR, "vanilla_titan_camos", ["vanilla_titans_000"])
+	// Registry_InferRPakData("vanilla_titan_camos", $"datatable/titans_mp.rpak")
+	// Registry_InferRPakData("vanilla_titan_camos", $"datatable/camo_skins.rpak")
+	// Registry_InferFunction(ArmoryUtils_ClosureBox(CreateGenericSubItemData), eTaskType.FACTORY, "vanilla_titan_camos")
+
+	// var GenerateTitanPassives = ArmoryUtils_ClosureBox(array function(
+	// 	string titanRef
+	// ) {
+	// 	array out = []
+    // 	ItemData itemData = GetItemData( titanRef )
+	// 	array<int> pTypes = [
+	// 		expect int(itemData.i.passive1Type), expect int(itemData.i.passive2Type),
+	// 		expect int(itemData.i.passive3Type), expect int(itemData.i.passive4Type),
+	// 		expect int(itemData.i.passive5Type), expect int(itemData.i.passive6Type)
+	// 	]
+
+	// 	table<int, bool> processedTypes = {}
+	// 	foreach (int pType in pTypes) {
+	// 		if (pType in processedTypes) continue
+	// 		processedTypes[pType] <- true
+
+	// 		foreach ( item in GetAllItemsOfType( pType ) ) {
+	// 			out.append({ itemType = pType, parentRef = titanRef, itemRef = item.ref, cost = GetItemCost(item.ref) })
+	// 		}
+	// 	}
+
+	// 	return out
+	// })
+
+	// Registry_InferFunction( GenerateTitanPassives, eTaskType.GENERATOR, "vanilla_titan_passives", ["vanilla_titans_000"] )
+	// Registry_InferRPakData( "vanilla_titan_passives", $"datatable/titans_mp.rpak" )
+	// Registry_InferFunction( ArmoryUtils_ClosureBox(CreateGenericSubItemData), eTaskType.FACTORY, "vanilla_titan_passives" )
 
 	//*
 	var titanPropertiesDataTable = GetDataTable( $"datatable/titan_properties.rpak" )
@@ -2234,16 +2315,15 @@ void function InitItems()
 		}
 
 		#if SERVER || CLIENT
-			int propertyRow = GetDataTableRowMatchingStringValue( titanPropertiesDataTable, GetDataTableColumnByName( titanPropertiesDataTable, "titanRef" ), titanRef )
-			string setFile = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "setFile" ) )
-			PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
-			PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
-			string primeSetFile = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "primeSetFile" ) )
-			if ( primeSetFile != "" )
-			{
-				PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
-				PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
-			}
+		int propertyRow = GetDataTableRowMatchingStringValue( titanPropertiesDataTable, GetDataTableColumnByName( titanPropertiesDataTable, "titanRef" ), titanRef )
+		string setFile = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "setFile" ) )
+		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
+		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
+		string primeSetFile = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "primeSetFile" ) )
+		if ( primeSetFile != "" ) {
+			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
+			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
+		}
 		#endif
 		// string primary = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "primary" ) )
 		// string melee = GetDataTableString( titanPropertiesDataTable, propertyRow, GetDataTableColumnByName( titanPropertiesDataTable, "melee" ) )

@@ -324,6 +324,8 @@ ParamBinding function CreateParamBinding( string colName, int dataType, int data
 	return b
 }
 
+
+
 ParamBinding function InferParamBinding( string argName ) {
 	//	Clone from inference
 	ParamBinding b
@@ -368,7 +370,6 @@ array<string> function Registry_GetSubNames( string name ) {
 
 	return subNames
 }
-
 
 TaskStage_Blueprint function Registry_ReflectFunc( var target ) {
 	TaskStage_Blueprint bp
@@ -589,18 +590,14 @@ void function Registry_CachePhase() {
 				switch (typeof(newVal)) {
 					case "array":
 						array arr = expect array(newVal)
-						//b.colName = b.argName
 
-						//	Column type override
-						b.dataType = expect int(arr[0])
+						//	arr[0]: column redirection
+						b.colName = expect string(arr[0])
 
-						//	Column name override (optional)
+						//	arr[1]: type setting
 						if (arr.len()< 2) { break; }
-						b.colName = expect string(arr[1])
-						break;
+						b.dataType = expect int(arr[1])
 
-					case "string":
-						b.colName = expect string(newVal)
 						break;
 
 					default:
@@ -755,7 +752,14 @@ void function Registry_StagePhase() {
 
 						array arr = expect array(b.value)
 						string typeStr = expect string( arr[r] )
-						return (typeStr in eItemTypes) ? eItemTypes[ typeStr ] : "PIPELINE_SKIP"
+
+						if (typeStr in eItemTypes) {
+							//Logger_Info( "Task '{}' resolving eItemType '{}'", task.name, typeStr )
+							return eItemTypes[ typeStr ]
+						}
+
+						Logger_Warn( "Task '{}' could not resolve eItemType '{}', skipping", task.name, typeStr )
+						return "PIPELINE_SKIP"
 					}; break; }
 
 					b.Get = var function( int r ) : (b, task) {
@@ -1032,7 +1036,10 @@ void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 			bool skipRow = false
 			foreach ( ParamBinding b in bindings ) {
 				var val = b.Get(r)
-				if (typeof(val)=="string" && val == "PIPELINE_SKIP") { skipRow = true; break; }
+				if (typeof(val)=="string" && val == "PIPELINE_SKIP") {
+					Logger_Info("Task '{}' skipping row...", task.name)
+					skipRow = true; break;
+				}
 				args.append(val)
 			}
 
@@ -1075,16 +1082,3 @@ void function Registry_ExecutePipeline() {
 	//	Phase 5: Construct argument lists and unbox data natively into the factory methods
 	Registry_BuildPhase( registry.queueBuild_ItemData )
 }
-
-/// ╔═════════════════════════════════════════════════════════════════════════════════════════╗
-/// ║                                                                                         ║
-/// ║  █████   █████   █████████   ██████   █████ █████ █████       █████         █████████   ║
-/// ║ ░░███   ░░███   ███░░░░░███ ░░██████ ░░███ ░░███ ░░███       ░░███         ███░░░░░███  ║
-/// ║  ░███    ░███  ░███    ░███  ░███░███ ░███  ░███  ░███        ░███        ░███    ░███  ║
-/// ║  ░███    ░███  ░███████████  ░███░░███░███  ░███  ░███        ░███        ░███████████  ║
-/// ║  ░░███   ███   ░███░░░░░███  ░███ ░░██████  ░███  ░███        ░███        ░███░░░░░███  ║
-/// ║   ░░░█████░    ░███    ░███  ░███  ░░█████  ░███  ░███      █ ░███      █ ░███    ░███  ║
-/// ║     ░░███      █████   █████ █████  ░░█████ █████ ███████████ ███████████ █████   █████ ║
-/// ║      ░░░      ░░░░░   ░░░░░ ░░░░░    ░░░░░ ░░░░░ ░░░░░░░░░░░ ░░░░░░░░░░░ ░░░░░   ░░░░░  ║
-/// ║                                                                                         ║
-/// ╚═════════════════════════════════════════════════════════════════════════════════════════╝
