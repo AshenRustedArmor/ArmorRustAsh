@@ -1527,9 +1527,9 @@ void function RegistryInitItems() {
 
 	///	===========	PILOT ABILITY DATA ////	GOOD ==============================
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "v_pilot_abilities")
-	Registry_InferRPakData( "v_pilot_abilities", $"datatable/pilot_abilities.rpak", { /*ref=["itemRef"]*/ })
+	Registry_InferRPakData( "v_pilot_abilities", $"datatable/pilot_abilities.rpak" )
 
-	///	===========	PILOT ABILITY DATA ////	GOOD ==============================
+	///	===========	PILOT PASSIVE DATA ////	GOOD ==============================
 	Registry_InferFunction( ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "v_pilot_passives" )
 	Registry_InferRPakData( "v_pilot_passives", $"datatable/pilot_passives.rpak", { ref = ["passive"] } )
 
@@ -1590,7 +1590,7 @@ void function RegistryInitItems() {
 	Registry_InferFunction( InvertHidden, eTaskType.MUTATOR, "v_pilot_boosts" )
 
 	Registry_InferRPakData( "v_pilot_boosts", $"datatable/burn_meter_rewards.rpak", {
-		/*ref=["itemRef"],*/ desc = ["name"], hidden = ["selectable", eColType.BOOL], itemType = eItemTypes.BURN_METER_REWARD
+		desc = ["name"], hidden = ["selectable", eColType.BOOL], itemType = eItemTypes.BURN_METER_REWARD
 	})
 
 	///////////////////////////////////////////////////////////////////////////
@@ -1605,7 +1605,7 @@ void function RegistryInitItems() {
 	///	===========	TITAN ABILITY DATA ////	TEST ==============================
 	Registry_InferFunction( ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "v_titan_abilities" )
 	Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "v_titan_abilities" )
-	Registry_InferRPakData( "v_titan_abilities", $"datatable/titan_abilities.rpak", { /*ref=["itemRef"],*/ cost=0 })
+	Registry_InferRPakData( "v_titan_abilities", $"datatable/titan_abilities.rpak", { cost=0 })
 
 	///	===========	TITAN LOADOUT DATA ////	GOOD ==============================
 	var FilterDisabledTitanRef = ArmoryUtils_ClosureBox(table function( string titanRef ) {
@@ -1774,13 +1774,8 @@ void function RegistryInitItems() {
 	Registry_InferFunction( PlayerProfileValidate,	eTaskType.MUTATOR,	"v_profile_banners" )
 	Registry_InferFunction( PlayerProfileValidate,	eTaskType.MUTATOR,	"v_profile_icons" )
 
-	Registry_InferRPakData( "v_profile_banners", $"datatable/calling_cards.rpak", {
-		/*ref=["itemRef"],*/ itemType = eItemTypes.CALLING_CARD, hidden = false
-	})
-
-	Registry_InferRPakData( "v_profile_icons", $"datatable/callsign_icons.rpak", {
-		/*ref=["itemRef"],*/ itemType = eItemTypes.CALLSIGN_ICON, hidden = false
-	})
+	Registry_InferRPakData( "v_profile_banners", $"datatable/calling_cards.rpak", { itemType = eItemTypes.CALLING_CARD, hidden = false })
+	Registry_InferRPakData( "v_profile_icons", $"datatable/callsign_icons.rpak", { itemType = eItemTypes.CALLSIGN_ICON, hidden = false })
 }
 
 void function InitItems()
