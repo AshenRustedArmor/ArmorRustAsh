@@ -147,9 +147,9 @@ fn build_divider(rendered_row: &str, vert: &str, horz: &str, cross: &str) -> Str
 }
 
 /// Finds the 1-based column position of `key` in `column_keys`
-/// (position 0 is always reserved for the message).
+/// (position 0 is always reserved for the message, position 1 for the log-level).
 fn find_position(column_keys: &[String], key: &str) -> Option<usize> {
-	column_keys.iter().position(|k| k == key).map(|i| i + 1)
+	column_keys.iter().position(|k| k == key).map(|i| i + 2)
 }
 
 //	============================================================================

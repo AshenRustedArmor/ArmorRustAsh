@@ -69,6 +69,7 @@ pub fn parse_log_format(format_str: &str, separators_str: &str) -> Result<LogFor
 		// Resolve positional assignment: position 0 is reserved for the message.
 		let pos_idx = match key {
 			"M" | "message" => 0,
+			"L" | "log-level" => 1,
 			custom => match column_keys.iter().position(|k| k == custom) {
 				Some(pos) => pos + 1, // Key already registered; reuse its slot.
 				None => {
