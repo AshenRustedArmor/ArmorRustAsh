@@ -627,7 +627,7 @@ void function RegistryPipelineInit() {
 
 	//	Types & References
 	inferences.itemtype			<- CreateParamBinding( "type",			eColType.STRING )
-	inferences.ref				<- CreateParamBinding( "ref",			eColType.STRING )
+	inferences.ref				<- CreateParamBinding( "itemRef",		eColType.STRING )
 	inferences.itemref			<- CreateParamBinding( "itemRef",		eColType.STRING )
 	inferences.parentref		<- CreateParamBinding( "parentRef",		eColType.STRING )
 	inferences.weaponref		<- CreateParamBinding( "weaponRef",		eColType.STRING )
@@ -1527,7 +1527,7 @@ void function RegistryInitItems() {
 
 	///	===========	PILOT ABILITY DATA ////	GOOD ==============================
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "v_pilot_abilities")
-	Registry_InferRPakData( "v_pilot_abilities", $"datatable/pilot_abilities.rpak", { ref = ["itemRef"] })
+	Registry_InferRPakData( "v_pilot_abilities", $"datatable/pilot_abilities.rpak", { /*ref=["itemRef"]*/ })
 
 	///	===========	PILOT ABILITY DATA ////	GOOD ==============================
 	Registry_InferFunction( ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "v_pilot_passives" )
@@ -1537,7 +1537,7 @@ void function RegistryInitItems() {
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreatePassiveData), eTaskType.FACTORY, "v_pilot_taunts")
 	Registry_InferFunction(FilterDisabledRef, eTaskType.MUTATOR, "v_pilot_taunts")
 	Registry_InferRPakData("v_pilot_taunts", $"datatable/pilot_executions.rpak", {
-		itemType = eItemTypes.PILOT_EXECUTION
+		ref = ["ref"], itemType = eItemTypes.PILOT_EXECUTION
 	})
 
 	/**	===========	WEAPON FEATURE DATA ///	ISSUE: MENU CRASH
@@ -1567,12 +1567,12 @@ void function RegistryInitItems() {
 	Registry_InferFunction(AttachmentSlotsGenerate, eTaskType.GENERATOR, "v_pilot_attachments")
 	Registry_InferFunction(AttachmentSlotsModify, eTaskType.MUTATOR, "v_pilot_attachments", ["v_pilot_weapon_features_000"])
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateGenericSubItemData), eTaskType.FACTORY, "v_pilot_attachments")
-	Registry_InferRPakData("v_pilot_attachments", $"datatable/pilot_weapons.rpak", { parentRef = ["itemRef"], t = {} })
+	Registry_InferRPakData("v_pilot_attachments", $"datatable/pilot_weapons.rpak", { parentRef=["itemRef"], t = {} })
 	//*/
 
 	///	===========	PILOT BOOST DATA //////	GOOD ==============================
-	var CreateBurnMeter = ArmoryUtils_ClosureBox(void function(
-		int datatableIndex, string ref, string name, int cost,
+	var FactoryBurnMeter = ArmoryUtils_ClosureBox(void function(
+		int datatableIndex, string itemRef, string name, int cost,
 		asset image, asset model, bool hidden
 	) {
 		//	Client script error happens w/o server precache
@@ -1580,22 +1580,32 @@ void function RegistryInitItems() {
 		PrecacheModel( model )
 		#endif
 
-		CreateGenericItem( datatableIndex, eItemTypes.BURN_METER_REWARD, ref, name, name, name, image, cost, hidden )
+		CreateGenericItem( datatableIndex, eItemTypes.BURN_METER_REWARD, itemRef, name, name, name, image, cost, hidden )
 	})
 
-	Registry_InferFunction( ArmoryUtils_ClosureBox(CreateBurnMeter), eTaskType.FACTORY, "v_pilot_boosts" )
+	Registry_InferFunction( ArmoryUtils_ClosureBox(FactoryBurnMeter), eTaskType.FACTORY, "v_pilot_boosts" )
 	Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "v_pilot_boosts" )
 
 	var InvertHidden = ArmoryUtils_ClosureBox(table function(bool hidden) { return { hidden = !hidden }; })
 	Registry_InferFunction( InvertHidden, eTaskType.MUTATOR, "v_pilot_boosts" )
 
 	Registry_InferRPakData( "v_pilot_boosts", $"datatable/burn_meter_rewards.rpak", {
-		ref = ["itemRef"], desc = ["name"], hidden = ["selectable", eColType.BOOL], itemType = eItemTypes.BURN_METER_REWARD
+		/*ref=["itemRef"],*/ desc = ["name"], hidden = ["selectable", eColType.BOOL], itemType = eItemTypes.BURN_METER_REWARD
 	})
 
 	///////////////////////////////////////////////////////////////////////////
 	///									TITANS
 	///////////////////////////////////////////////////////////////////////////
+
+	///	===========	TITAN WEAPON DATA /////	TEST ==============================
+	Registry_InferFunction( ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "v_titan_weapons" )
+	Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "v_titan_weapons" )
+	Registry_InferRPakData( "v_titan_weapons", $"datatable/titan_primary_weapons.rpak", { itemType=eItemTypes.TITAN_PRIMARY, isDamageSource=true, cost=0 })
+
+	///	===========	TITAN ABILITY DATA ////	TEST ==============================
+	Registry_InferFunction( ArmoryUtils_ClosureBox(CreateWeaponData), eTaskType.FACTORY, "v_titan_abilities" )
+	Registry_InferFunction( FilterDisabledRef, eTaskType.MUTATOR, "v_titan_abilities" )
+	Registry_InferRPakData( "v_titan_abilities", $"datatable/titan_abilities.rpak", { /*ref=["itemRef"],*/ cost=0 })
 
 	///	===========	TITAN LOADOUT DATA ////	GOOD ==============================
 	var FilterDisabledTitanRef = ArmoryUtils_ClosureBox(table function( string titanRef ) {
@@ -1672,7 +1682,7 @@ void function RegistryInitItems() {
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateTitanExecutionData), eTaskType.FACTORY, "v_titan_taunts")
 	Registry_InferFunction(FilterDisabledRef, eTaskType.MUTATOR, "v_titan_taunts")
 	Registry_InferRPakData("v_titan_taunts", $"datatable/titan_executions.rpak", {
-		reqPrime = ["reqPrime", eColType.BOOL]
+		ref = ["ref"], reqPrime = ["reqPrime", eColType.BOOL]
 	})
 
 	///////////////////////////////////////////////////////////////////////////
@@ -1744,15 +1754,15 @@ void function RegistryInitItems() {
 
 	///	===========	MP PROFILE DATA ///////	GOOD ==============================
 	var PlayerProfileCreate = ArmoryUtils_ClosureBox(void function(
-		int dataTableIndex, int itemType, string ref, string name,
+		int dataTableIndex, int itemType, string itemRef, string name,
 		asset image, int cost, bool hidden,
 	) {
-		CreateGenericItem( dataTableIndex, itemType, ref, name, "", "", image, cost, hidden )
-		GetItemData( ref ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
+		CreateGenericItem( dataTableIndex, itemType, itemRef, name, "", "", image, cost, hidden )
+		GetItemData( itemRef ).imageAtlas = IMAGE_ATLAS_CALLINGCARD
 	})
 
-	var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string ref, int cost, bool hidden ) {
-		return { ref = IsDisabledRef(ref) ? "PIPELINE_SKIP" : ref, hidden = (cost < 0), cost = max(cost, 0) }
+	var PlayerProfileValidate = ArmoryUtils_ClosureBox(table function( string itemRef, int cost, bool hidden ) {
+		return { itemRef = IsDisabledRef(itemRef) ? "PIPELINE_SKIP" : itemRef, hidden = (cost < 0), cost = max(cost, 0) }
 	})
 
 	Registry_InferFunction( PlayerProfileCreate,	eTaskType.FACTORY,	"v_profile_banners" )
@@ -1765,11 +1775,11 @@ void function RegistryInitItems() {
 	Registry_InferFunction( PlayerProfileValidate,	eTaskType.MUTATOR,	"v_profile_icons" )
 
 	Registry_InferRPakData( "v_profile_banners", $"datatable/calling_cards.rpak", {
-		ref = ["itemRef"], itemType = eItemTypes.CALLING_CARD, hidden = false
+		/*ref=["itemRef"],*/ itemType = eItemTypes.CALLING_CARD, hidden = false
 	})
 
 	Registry_InferRPakData( "v_profile_icons", $"datatable/callsign_icons.rpak", {
-		ref = ["itemRef"], itemType = eItemTypes.CALLSIGN_ICON, hidden = false
+		/*ref=["itemRef"],*/ itemType = eItemTypes.CALLSIGN_ICON, hidden = false
 	})
 }
 
@@ -1896,7 +1906,7 @@ void function InitItems()
 		item.i.categoryId <- categoryId
 	}	//*/
 
-	InitTitanWeaponDataMP()
+	//InitTitanWeaponDataMP()
 
 	/// ====================================================
 	/// 			PILOT WEAPON DATA
