@@ -442,10 +442,11 @@ Replace:	const string $1_INFO
 ///	===========================================================================
 //		Options for data retrieval
 //	Maps to GetDataTable[Type] functions, allowing typed retrieval
-enum eColType { NULL, BOOL, INT, FLOAT, VECTOR, STRING, ASSET }
+enum eColType { NULL, BOOL, INT, FLOAT, VECTOR, STRING, ASSET, ITYPE }
+array<string> strColTypes = ["NULL", "BOOL", "INT", "FLOAT", "VECTOR", "STRING", "ASSET", "ITYPE"]
 
 //	Declares where data comes from, allowing pregeneration of getters
-enum eParamSource { DATATABLE, ROW_INDEX, STATIC_VAL, GENERATED }
+enum eParamSource { ROW_INDEX, STATIC_VAL, DATATABLE, DATA_JOIN, GENERATED }
 
 //		ParamBinding
 //	Links a column in registry.cache to a function parameter
@@ -459,7 +460,8 @@ struct ParamBinding {
 	int dataSource	= eParamSource.DATATABLE	//	Controls retrieval function
 	var value 		= null						//	Static val or column arr
 
-	//	Value retrieval function
+	//	Value retrieval
+	array<int> rowMap = []
 	var functionref( int ) Get = null			//	Getter assigned in ProcessBake
 }
 
@@ -475,32 +477,23 @@ struct RPakData {
 ///	===========================================================================
 //		Task Handling
 //	Necessary to extract internal task data, differentiate between target funcs
-enum eTaskType { FACTORY, MUTATOR, GENERATOR, DATATABLE }
+enum eTaskType { FACTORY, MUTATOR, GENERATOR }
 
 ///	=== INFER PHASE ===========================================================
 //		Function binding
 //	Binds an arbitrary function, type of which is defined by eTaskType. This
 //	replaces TaskInfer_Factory, TaskInfer_Mutator, etc.
-struct TaskInfer_Function {
+struct Task_ReflectFunc {
 	string name
 	int taskType
 
 	var target
 }
 
-
 ///	=== CACHE PHASE ===========================================================
 //		Data binding
-//	Applies overrides to datatable columns / argument values
-struct TaskCache_BindData {
-	string name
-
-	asset rpakPath
-	table overrides
-}
-
 //	Creates bindings for RPakData, including column + static overrides
-struct TaskCache_BindRPak {
+struct Task_BindRPak {
 	string name
 
 	asset rpakPath
@@ -508,8 +501,19 @@ struct TaskCache_BindRPak {
 }
 
 ///	=== STAGE PHASE ===========================================================
+struct Task_JoinRPaks {
+	string name
+
+	asset childRPak
+	ParamBinding childBinding
+
+	asset parentRPak
+	string parentArg
+	ParamBinding parentBinding
+}
+
 //	Intermediate representation for parameter extraction.
-struct TaskStage_Blueprint {
+struct Task_BuildParam {
 	string name
 
 	//	Extracted functionality from the target
@@ -524,7 +528,7 @@ struct TaskStage_Blueprint {
 ///	=== PATCH PHASE ===========================================================
 //	Ordered tasks with an internal data struct. Necessary for the Mutate phase
 //	where order-of-execution matters a great deal
-struct TaskPatch_Ordered {
+struct Task_OrderedPatch {
 	string name
 	int taskType
 
@@ -561,10 +565,11 @@ struct {
 //	array< void functionref() > cb_OnRegistryInit
 
 	/// === QUEUES ============================================================
-	array<TaskInfer_Function>	queueInfer_Function		//	Infer Phase
-	array<TaskCache_BindRPak>	queueCache_BindRPak		//	Cache Phase
-	array<TaskStage_Blueprint>	queueStage_Blueprint	//	Stage Phase
-	array<TaskPatch_Ordered>	queuePatchAllTasks		//	Patch Phase
+	array<Task_ReflectFunc>		queue_ReflectFunc		//	Infer Phase
+	array<Task_BindRPak>		queue_BindRPak			//	Cache Phase
+//	array<Task_BuildParam>		queue_JoinRPaks			//	Stage Phase
+	array<Task_BuildParam>		queue_BuildParam		//	Stage Phase
+	array<Task_OrderedPatch>	queuePatchAllTasks		//	Patch Phase
 	array<TaskBuild_ItemData>	queueBuild_ItemData		//	Build Phase
 
 	/// === BINDINGS ==========================================================
@@ -603,9 +608,10 @@ void function RegistryPipelineInit() {
 	registry.topoID = ArmoryUtils_TopoCreate()
 
 	//	Clear queues
-	registry.queueInfer_Function.clear()	//	INFER
-	registry.queueCache_BindRPak.clear()	//	CACHE
-	registry.queueStage_Blueprint.clear()	//	STAGE
+	registry.queue_ReflectFunc.clear()		//	INFER
+	registry.queue_BindRPak.clear()			//	CACHE
+	registry.queue_BuildParam.clear()		//	STAGE
+//	registry.queue_JoinRPaks.clear()		//	STAGE
 	registry.queuePatchAllTasks.clear()		//	PATCH
 	registry.queueBuild_ItemData.clear()	//	BUILD
 
@@ -626,9 +632,11 @@ void function RegistryPipelineInit() {
 	inferences.rowidx			<- CreateParamBinding( "",				eColType.INT,		eParamSource.ROW_INDEX )
 
 	//	Types & References
-	inferences.itemtype			<- CreateParamBinding( "type",			eColType.STRING )
+	inferences.itemtype			<- CreateParamBinding( "type",			eColType.ITYPE )
+
 	inferences.ref				<- CreateParamBinding( "itemRef",		eColType.STRING )
 	inferences.itemref			<- CreateParamBinding( "itemRef",		eColType.STRING )
+
 	inferences.parentref		<- CreateParamBinding( "parentRef",		eColType.STRING )
 	inferences.weaponref		<- CreateParamBinding( "weaponRef",		eColType.STRING )
 //	inferences.titanref			<- CreateParamBinding( "titanRef", 		eColType.STRING )
@@ -638,8 +646,10 @@ void function RegistryPipelineInit() {
 	inferences.name				<- CreateParamBinding( "name",			eColType.STRING )
 	inferences.desc				<- CreateParamBinding( "description",	eColType.STRING )
 	inferences.longdesc			<- CreateParamBinding( "description",	eColType.STRING )
+
 	inferences.image			<- CreateParamBinding( "image",			eColType.ASSET )
 	inferences.model			<- CreateParamBinding( "model",			eColType.ASSET )
+	inferences.coreIcon			<- CreateParamBinding( "coreIcon", 		eColType.ASSET )
 
 	//	Stats & Booleans
 	inferences.cost				<- CreateParamBinding( "cost",			eColType.INT )
@@ -724,8 +734,8 @@ array<string> function Registry_GetSubNames( string name ) {
 	return subNames
 }
 
-TaskStage_Blueprint function Registry_ReflectFunc( var target ) {
-	TaskStage_Blueprint bp
+Task_BuildParam function Registry_ReflectFunc( var target ) {
+	Task_BuildParam bp
 
 	local infos = target.getinfos()
 
@@ -764,12 +774,12 @@ void function Registry_InferFunction(
 	foreach (string a in after) { ArmoryUtils_TopoEdge(registry.topoID, currName, a) }
 
 	//		Initiate and queue task for parameter inference phase
-	//	the TaskInfer_Function should be doing the "build blueprint" block above
-	TaskInfer_Function taskInfer
-	taskInfer.name		= currName
-	taskInfer.taskType	= taskType
-	taskInfer.target	= target
-	registry.queueInfer_Function.append(taskInfer)
+	//	the Task_ReflectFunc should be doing the "build blueprint" block above
+	Task_ReflectFunc taskReflect
+	taskReflect.name		= currName
+	taskReflect.taskType	= taskType
+	taskReflect.target		= target
+	registry.queue_ReflectFunc.append(taskReflect)
 
 	if (taskType == eTaskType.FACTORY) {
 		//	Initiate and queue task for ItemData building phase
@@ -783,7 +793,7 @@ void function Registry_InferFunction(
 	}
 
 	//	Initiate and queue task for patching phase
-	TaskPatch_Ordered patchTask
+	Task_OrderedPatch patchTask
 	patchTask.name		= currName
 	patchTask.taskType	= taskType
 	patchTask.target	= target
@@ -802,11 +812,11 @@ void function Registry_InferRPakData(
 	//		Instantiate tasks
 	//	Instantiate and queue tasks for caching phase
 	foreach (string currName in Registry_GetSubNames(taskName)) {
-		TaskCache_BindRPak taskCache
+		Task_BindRPak taskCache
 		taskCache.name		= currName
 		taskCache.rpakPath	= rpakPath
 		taskCache.overrides	= overrides
-		registry.queueCache_BindRPak.append(taskCache)
+		registry.queue_BindRPak.append(taskCache)
 	}
 }
 
@@ -837,6 +847,12 @@ array<string> function CreateInitialCols( string task ) { return [
 	]
 }
 
+void function Logger_Debug( string fmtStr, string task, ... ) { if (false) {
+		array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
+		ArmoryLog_Info( registry.logger, CreateInitialCols(task), "DEBUG: " + fmtStr, args )
+	}
+}
+
 void function Logger_Info( string fmtStr, string task, ... )  {
 	array<string> args = []; for (int i = 0; i < vargc; i++) { args.append("" + vargv[i]) }
 	ArmoryLog_Info( registry.logger, CreateInitialCols(task), fmtStr, args )
@@ -859,11 +875,8 @@ void function Logger_Fatal( string fmtStr, string task, ... ) {
 ///	============================================================================
 ///								Task Processing
 ///	============================================================================
-void function Registry_InferPhase() {
-	registry.phase++
-
-	//	Infer bindings from function parameter reflection
-	foreach (TaskInfer_Function task in registry.queueInfer_Function) {
+void function Registry_ReflectFuncs() {
+	foreach (Task_ReflectFunc task in registry.queue_ReflectFunc) {
 		//		Sanity checks
 		//	Preemptive null name check - can't index
 		if (task.name == "") { continue; }
@@ -876,7 +889,7 @@ void function Registry_InferPhase() {
 
 		//		Build Blueprint
 		//	Retrieve base data
-		TaskStage_Blueprint bp = Registry_ReflectFunc( task.target )
+		Task_BuildParam bp = Registry_ReflectFunc( task.target )
 		bp.name = task.name
 
 		//	Initialize bindings from target
@@ -910,20 +923,14 @@ void function Registry_InferPhase() {
 		registry.allBindings[task.name] <- fromFunc
 		bp.destArray = destTable[task.name]
 
-		registry.queueStage_Blueprint.append(bp)
+		registry.queue_BuildParam.append(bp)
 
 		Logger_Info( "Completed inference step", task.name)
 	}
-
-	//Logger_Info( "Inferred bindings for [%I{, }]")
-
-//		Clear queues
-	registry.queueInfer_Function.clear()
 }
 
-void function Registry_CachePhase() {
-	registry.phase++
-
+void function Registry_ApplyOverrides() {
+	//	Validate bindings
 	table< string, table<string, ParamBinding> > validArgs = {}	//	taskName, {argName, ...}
 	table< string, table<string, ParamBinding> > validCols = {}	//	taskName, {argName, ...}
 	foreach (string subName, array<ParamBinding> bindings in registry.allBindings) {
@@ -942,7 +949,7 @@ void function Registry_CachePhase() {
 	}
 
 	//		Process overrides, link bindings
-	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
+	foreach (Task_BindRPak task in registry.queue_BindRPak) {
 		//		Retrieve task-specific bindings
 		//	Can't operate on something that isn't indexed
 		if (!(task.name in registry.allBindings)) {
@@ -978,33 +985,61 @@ void function Registry_CachePhase() {
 			    paramKey = b.argName
 			} else if (b.colName != "" && (b.colName in task.overrides)) {
 				paramKey = b.colName
-			}
-
-			//	2). Apply override from retrieved key
-			if (paramKey != "") {
-				ArmoryLog_Iter(registry.logger, paramKey)
-
-				var newVal = task.overrides[paramKey]
-				switch (typeof(newVal)) {
-					case "array":
-						array arr = expect array(newVal)
-
-						//	arr[0]: column redirection
-						b.colName = expect string(arr[0])
-
-						//	arr[1]: type setting
-						if (arr.len()< 2) { break; }
-						b.dataType = expect int(arr[1])
-
-						break;
-
-					default:
-						b.dataSource = eParamSource.STATIC_VAL
-						b.value = newVal
-						break;
-				}
 			} else {
 				ArmoryLog_Iter(registry.logger, "~")
+
+				//	3).	Queue datatable dependencies
+				//	Can safely skip non-datatable bindings
+				if (b.dataSource != eParamSource.DATATABLE) { continue; }
+
+				//	Missing column name indicates no inference match
+				if (b.colName == "") {
+					Logger_Fatal( "Argument '{}' cannot be inferred from '{}'. Missing override?\n[%I{, }]", task.name, b.argName, task.rpakPath )
+				}
+
+				fromTable.append(b)
+				continue
+			}
+
+			ArmoryLog_Iter(registry.logger, paramKey)
+
+			//	2). Apply override from retrieved key
+			var newVal = task.overrides[paramKey]
+			string valType = typeof(newVal)
+			if (valType == "array") {
+				array arr = expect array(newVal)
+
+				//	arr[0]: column redirection
+				b.colName = expect string(arr[0])
+
+				//	arr[1]: type setting
+				if (arr.len() > 1) {
+					b.dataType = expect int(arr[1])
+				}
+			} else if (valType == "table") {
+				table joinTable = expect table(newVal)
+				foreach (string pArg, var pPak in joinTable) {
+					//	Ensure type compatibility
+					if (typeof(pPak) != "asset") {
+						Logger_Error("Passed rpakPath is of type {}", task.name, typeof(pPak))
+					}
+
+					// Task_JoinRPaks join
+					// join.name = task.name
+
+					// join.childRPak = task.rpakPath
+					// join.childBinding = b&
+
+					// join.parentRPak = expect asset(pPak)
+					// join.parentArg = pArg
+
+					// queue_JoinRPaks.append(join)
+					break;
+				}
+			} else {
+				Logger_Debug("valType defaulted for {}", task.name, b.colName)
+				b.dataSource = eParamSource.STATIC_VAL
+				b.value = newVal
 			}
 
 			//	3).	Queue datatable dependencies
@@ -1026,9 +1061,27 @@ void function Registry_CachePhase() {
 			registry.rpakBindings[task.rpakPath].extend(fromTable)
 		} else { registry.rpakBindings[task.rpakPath] <- fromTable }
 	}
+}
 
-	//	Second pass
-	foreach (TaskCache_BindRPak task in registry.queueCache_BindRPak) {
+void function Registry_ResolveJoins() {
+	// foreach (Task_JoinRPaks task in registry.queue_JoinRPaks) {
+	// 	array<ParamBindings> parentBindings = registry.rpakBindings[task.parentRPak]
+	// 	array<ParamBinding>	 joinBindings   = registry.rpakBindings[task.joinRPak]
+
+	// 	//	Scan the parent bindings to find the parent binding
+
+	// 	array<int> rowIndices
+
+	// 	//	Apply indices
+
+	// 	foreach (ParamBinding b in joinBindings) {
+	// 		b.rowIndices = rowIndices
+	// 	}
+	// }
+}
+
+void function Registry_CacheRPaks() {
+	foreach (Task_BindRPak task in registry.queue_BindRPak) {
 		//		Sanity checks
 		//	Can't retrieve from something that's not cached
 		if (!(task.rpakPath in registry.rpakBindings)) { continue }
@@ -1044,6 +1097,7 @@ void function Registry_CachePhase() {
 			RPakData rpak = registry.cache[task.rpakPath]
 			foreach ( ParamBinding b in bindings ) {
 				if ( b.value == null && b.colName in rpak.data ) {
+					Logger_Debug("Cache hit for \'{}\'", task.name, b.colName)
 					b.value = rpak.data[ b.colName ]
 				}
 			}
@@ -1062,10 +1116,7 @@ void function Registry_CachePhase() {
 		table< string, array<int> > colsToFetch = {}
 		foreach ( ParamBinding b in bindings ) {
 			//	Skip already tracked columns
-			if (b.colName in colsToFetch) {
-				continue
-			}
-
+			if (b.colName in colsToFetch) { continue; }
 			ArmoryLog_Iter(registry.logger, b.colName)
 
 			//	Fetch numeric index for column, throw error if not found
@@ -1096,6 +1147,8 @@ void function Registry_CachePhase() {
 
 			//	Fill the array<var> inside the RPakData. Ideally done with a
 			//	lambda to prevent having to switch on the enum every time.
+			Logger_Debug("{}#{} (index {}) of type {}", task.name, task.rpakPath, colName, colIdx, strColTypes[idxAndType[1]])
+
 			var functionref( int ) DataTableGet = null
 			switch( idxAndType[1] ) {
 				case eColType.BOOL:   DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableBool(dt, row, colIdx) }; break
@@ -1103,6 +1156,13 @@ void function Registry_CachePhase() {
 				case eColType.FLOAT:  DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableFloat(dt, row, colIdx) }; break
 				case eColType.STRING: DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableString(dt, row, colIdx) }; break
 				case eColType.ASSET:  DataTableGet = var function( int row ) : (dt, colIdx) { return GetDataTableAsset(dt, row, colIdx) }; break
+
+				case eColType.ITYPE:  DataTableGet = var function( int row ) : (dt, colIdx) {
+					string ty = GetDataTableString(dt, row, colIdx)
+					if (ty in eItemTypes) { return eItemTypes[ty]; }
+					// Logger_Warn( "Could not resolve eItemType '{}', skipping", task.name, typeStr )
+					return "PIPELINE_SKIP"
+				}; break;
 			}
 
 			//	Iterate over the column and fetch the entire thing.
@@ -1114,6 +1174,7 @@ void function Registry_CachePhase() {
 		//	Link cache to bindings
 		foreach (ParamBinding b in bindings) {
 			if (!(b.colName in rpak.data)) { continue; }
+			Logger_Debug("Linked \'{}\'", task.name, b.colName)
 			b.value = rpak.data[b.colName]
 		}
 
@@ -1121,19 +1182,14 @@ void function Registry_CachePhase() {
 		registry.cache[task.rpakPath] <- rpak
 		Logger_Info( "Cached RPak {} ({} rows): [%I{, }]", task.name, task.rpakPath, numRows )
 	}
-
-	//		Clear queues
-	registry.queueCache_BindRPak.clear()
 }
 
-void function Registry_StagePhase() {
-	registry.phase++
-
-	//		Compile binding getter closures
-	//	Binding closures cannot be finalized prior to overriding parameters in
-	//	the CACHE phase, otherwise executing closures during PATCH / BUILD will
-	//	throw type errors trying to index non-array static values.
-	foreach (TaskStage_Blueprint task in registry.queueStage_Blueprint) {
+//		Compile binding getter closures
+//	Binding closures cannot be finalized prior to overriding parameters in
+//	otherwise executing closures during PATCH / BUILD will throw type errors
+//  trying to index non-array static values.
+void function Registry_CompileGetters() {
+	foreach (Task_BuildParam task in registry.queue_BuildParam) {
 		//	contains all bindings, so only this needs to be mapped over.
 		foreach (ParamBinding b in task.destArray) {
 			ArmoryLog_Iter(registry.logger, b.argName)
@@ -1144,49 +1200,20 @@ void function Registry_StagePhase() {
 
 				case eParamSource.GENERATED:
 				case eParamSource.DATATABLE:
-					if (b.argName == "itemType") { b.Get = var function( int r ) : (b, task) {
-						if (b.value == null) {
-							Logger_Fatal( "eItemType '{}' has null value", task.name, b.colName );
-						}
-
-						array arr = expect array(b.value)
-						string typeStr = expect string( arr[r] )
-
-						if (typeStr in eItemTypes) {
-							//Logger_Info( "Task '{}' resolving eItemType '{}'", task.name, typeStr )
-							return eItemTypes[ typeStr ]
-						}
-
-						Logger_Warn( "Could not resolve eItemType '{}', skipping", task.name, typeStr )
-						return "PIPELINE_SKIP"
-					}; break; }
-
 					b.Get = var function( int r ) : (b, task) {
-						if (b.value == null) {
-							Logger_Fatal( "Argument '{}' has null value", task.name, b.colName );
-						}
-
-						return (expect array(b.value))[r]
+						if (b.value == null) { Logger_Fatal( "Argument '{}' has null value", task.name, b.colName ); }
+						int row = (b.rowMap.len() > 0) ? b.rowMap[r] : r
+						return (expect array(b.value))[row]
 					}; break;
 			}
 		}
 
 		Logger_Info( "Staged bindings: [%I{, }]", task.name)
 	}
-
-	//		Clear queues
-	registry.queueStage_Blueprint.clear()
 }
 
-void function Registry_PatchPhase() {
-	registry.phase++
-
-	//	Processing functions
-
-	//		1).	Verification
-	//	Verify patch bindings independently, seperate from patch application
-	//	Individual patches won't use all bindings assigned to a single job.
-	foreach (TaskPatch_Ordered task in registry.queuePatchAllTasks) {
+void function Registry_PatchVerify() {
+	foreach (Task_OrderedPatch task in registry.queuePatchAllTasks) {
 		//		Retrieve bindings based on task type
 		//	Switching the source table allows for one inclusion check
 		table< string, array<ParamBinding> > srcTable
@@ -1235,9 +1262,10 @@ void function Registry_PatchPhase() {
 
 		Logger_Info("Validated bindings", task.name)
 	}
+}
 
-	//		2).	Data Initialization
-	foreach (TaskPatch_Ordered task in registry.queuePatchAllTasks) {
+void function Registry_PatchInit() {
+	foreach (Task_OrderedPatch task in registry.queuePatchAllTasks) {
 		//		Retrieve bindings based on task type
 		//	Switching the source table allows for one inclusion check
 		table< string, array<ParamBinding> > srcTable
@@ -1253,7 +1281,7 @@ void function Registry_PatchPhase() {
 
 		//		Grab task-specific context
 		//	Reflect function info
-		TaskStage_Blueprint bp = Registry_ReflectFunc( task.target )
+		Task_BuildParam bp = Registry_ReflectFunc( task.target )
 		bp.name = task.name
 
 		//	Map task bindings to arg names for O(1) matching against function
@@ -1297,9 +1325,10 @@ void function Registry_PatchPhase() {
 			}
 		}
 	}
+}
 
-	//		3).	Application
-	foreach (TaskPatch_Ordered task in registry.queuePatchAllTasks) {
+void function Registry_PatchApply() {
+	foreach (Task_OrderedPatch task in registry.queuePatchAllTasks) {
 		//		Sanity checks
 		//	Skip tasks which haven't had their data filled out
 		// if (typeof(task.i) != "table") {
@@ -1393,17 +1422,10 @@ void function Registry_PatchPhase() {
 			foreach (ParamBinding b in taskBindings) { b.value = newOutputs[b.argName] }
 		}
 	}
-
-	//		Clear queues
-	registry.queuePatchAllTasks.clear()
-//	registry.queuePatchGenerate.clear()
 }
 
-void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
-	registry.phase++
-
-	//		ItemData baking
-	foreach (TaskBuild_ItemData task in queue) {
+void function Registry_BuildItemData() {
+	foreach (TaskBuild_ItemData task in registry.queueBuild_ItemData) {
 		//		Sanity checks
 		//	Unbound data
 		if ( !(task.name in registry.facBindings) ) { continue }
@@ -1449,25 +1471,42 @@ void function Registry_BuildPhase( array<TaskBuild_ItemData> queue ) {
 			task.target.acall( args )
 		}
 	}
-
-	//		Clear queues
-	registry.queueBuild_ItemData.clear()
 }
 
 void function Registry_ExecutePipeline() {
-	//	Phase 1: Reflect on functions, handle defaults, build blueprints
-	Registry_InferPhase()
+	///////	INFER: Reflect on functions, handle defaults, build blueprints
+	//	1). Reflect function signature to produce list of params + defaults
+	registry.phase++
+	Registry_ReflectFuncs()
 
-	//	Phase 2: Process columns/overrides, query RPak files, populate memory cache
-	Registry_CachePhase()
+	//	Clear queue
+	registry.queue_ReflectFunc.clear()
 
-	//	Phase 3: Bake parameter getter closures ('b.Get') after override resolution
-	Registry_StagePhase()
+	//	2).	Apply overrides to function parameters
+	Registry_ApplyOverrides()
 
-	//	Topological sort
+	///////	CACHE
+	//	1).	Query RPak files and cache to registry
+	registry.phase++
+	Registry_CacheRPaks()
+
+	//	Clear queue
+	registry.queue_BindRPak.clear()
+
+	///////	STAGE: Bake parameter getter closures after override resolution
+	registry.phase++
+	Registry_CompileGetters()				//
+
+	//	Clear queue
+	registry.queue_BuildParam.clear()
+
+	///////	PATCH
+	//	1).	Sort patches in topological order
+	registry.phase++
+
 	array<string> sortedNames = ArmoryUtils_TopoSortSafe( registry.topoID )
 
-	table<string, TaskPatch_Ordered> patchMap = {}
+	table<string, Task_OrderedPatch> patchMap = {}
 	foreach (task in registry.queuePatchAllTasks) {
 		patchMap[task.name] <- task
 	}
@@ -1477,11 +1516,26 @@ void function Registry_ExecutePipeline() {
 		registry.queuePatchAllTasks.append(patchMap[name])
 	}}
 
-	//	Phase 4: Execute mid-pipeline modifications / data generation in topological order
-	Registry_PatchPhase()
+	//	2).	Verification
+	//	Verify patch bindings independently, seperate from patch application
+	//	Individual patches won't use all bindings assigned to a single job.
+	Registry_PatchVerify()
 
-	//	Phase 5: Construct argument lists and unbox data natively into the factory methods
-	Registry_BuildPhase( registry.queueBuild_ItemData )
+	//	3).	Initialization
+	Registry_PatchInit()
+
+	//	4).	Application
+	Registry_PatchApply()
+
+	//	Clear queue
+	registry.queuePatchAllTasks.clear()
+
+	///////	BUILD
+	//	1).	Unbox data into factory closures
+	registry.phase++
+	Registry_BuildItemData()				//
+	registry.queueBuild_ItemData.clear()	//	Clear queues
+
 }
 
 /// ╔═════════════════════════════════════════════════════════════════════════════════════════╗
@@ -1511,6 +1565,13 @@ void function RegistryInitItems() {
 			CreateGenericSubItemData(itemType, target.ref, itemRef, cost, {categoryId = categoryId})
 		}
 	})
+
+	//	HACK: Fetch the datatable outside and pass it in
+	// var titanProperties = GetDataTable( $"datatable/titan_properties.rpak" )
+	// int refCol = GetDataTableColumnByName( titanProperties, "titanRef" )
+	// var MutateRowIndex = ArmoryUtils_ClosureBox(table function( string titanRef ) : ( titanProperties, refCol ) {
+	// 	return { rowIdx = GetDataTableRowMatchingStringValue(titanProperties, refCol, titanRef) }
+	// })
 
 	///////////////////////////////////////////////////////////////////////////
 	///									PILOTS
@@ -1590,7 +1651,7 @@ void function RegistryInitItems() {
 	Registry_InferFunction( InvertHidden, eTaskType.MUTATOR, "v_pilot_boosts" )
 
 	Registry_InferRPakData( "v_pilot_boosts", $"datatable/burn_meter_rewards.rpak", {
-		desc = ["name"], hidden = ["selectable", eColType.BOOL], itemType = eItemTypes.BURN_METER_REWARD
+		/*desc = ["name"],*/ hidden = ["selectable", eColType.BOOL]
 	})
 
 	///////////////////////////////////////////////////////////////////////////
@@ -1630,6 +1691,7 @@ void function RegistryInitItems() {
 		for (int i = 1; i <= 6; i++) {
 			int passiveType = GetTitanLoadoutPropertyPassiveType(setFile, "passive" + i)
 			if (passiveType in cache) { continue; }
+			cache[passiveType] <- true
 
 			array<ItemData> items = GetAllItemsOfType( passiveType )
 			foreach (item in items) {
@@ -1640,14 +1702,17 @@ void function RegistryInitItems() {
 
 	//	Titans themselves -----	GOOD
 	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateTitanData), eTaskType.FACTORY, "v_titans_mp")
-
-	Registry_InferFunction(PrecacheTitanModels, eTaskType.MUTATOR, "v_titans_mp" )
-	Registry_InferRPakData("v_titans_mp", $"datatable/titan_properties.rpak" )
-
 	Registry_InferFunction(FilterDisabledTitanRef, eTaskType.MUTATOR, "v_titans_mp")
+
 	Registry_InferRPakData("v_titans_mp", $"datatable/titans_mp.rpak", { coreIcon = ["coreIcon", eColType.ASSET] })
 
-	//	Passives
+	//Registry_InferFunction(PrecacheTitanModels, eTaskType.MUTATOR, "v_titans_mp" )
+	//Registry_InferRPakData("v_titans_mp", $"datatable/titan_properties.rpak" )
+
+	//	Passives ----- ISSUE
+	//	Row mismatch between titans_mp & titan_properties. Fix: allow mutators
+	//	to modify the row indexing order. eParamSource.ROW_IDX already exists,
+	//	create it for every datatable & use it to index rows.
 	// Registry_InferFunction(BuildTitanPassives, eTaskType.FACTORY, "v_titan_passives", ["v_titans_mp"])
 	// Registry_InferRPakData("v_titan_passives", $"datatable/titans_mp.rpak" )
 	// Registry_InferRPakData("v_titan_passives", $"datatable/titan_properties.rpak" )
@@ -6740,6 +6805,7 @@ void function CreateTitanData( int dataTableIndex, string titanRef, int cost, as
 	item.i.passive6Type <- GetTitanLoadoutPropertyPassiveType( setFile, "passive6" )
 	item.i.titanExecution <- GetTitanLoadoutPropertyExecutionType( setFile, "titanExecution" )
 
+	printt("CreateTitanData: dataTableIndex = " + dataTableIndex)
 	item.persistenceStruct = "titanChassis[" + dataTableIndex + "]"
 	item.persistenceId = dataTableIndex
 }
