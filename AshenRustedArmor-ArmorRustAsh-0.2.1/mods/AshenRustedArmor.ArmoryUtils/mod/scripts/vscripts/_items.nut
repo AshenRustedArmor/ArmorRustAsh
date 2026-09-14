@@ -465,6 +465,11 @@ struct ParamBinding {
 	var functionref( int ) Get = null			//	Getter assigned in ProcessBake
 }
 
+//
+struct ParamSource {
+	string colName
+}
+
 //		Cached data
 struct RPakData {
 	int numRows
@@ -504,12 +509,17 @@ struct Task_BindRPak {
 struct Task_JoinRPaks {
 	string name
 
-	asset childRPak
-	ParamBinding childBinding
+	string parentTask
 
+	asset childRPak
 	asset parentRPak
+
+	string childArg
 	string parentArg
+
+	//	Contains the join target
 	ParamBinding parentBinding
+	array<ParamBinding> joinedBindings
 }
 
 //	Intermediate representation for parameter extraction.
@@ -567,7 +577,7 @@ struct {
 	/// === QUEUES ============================================================
 	array<Task_ReflectFunc>		queue_ReflectFunc		//	Infer Phase
 	array<Task_BindRPak>		queue_BindRPak			//	Cache Phase
-//	array<Task_BuildParam>		queue_JoinRPaks			//	Stage Phase
+	array<Task_JoinRPaks>		queue_JoinRPaks			//	Stage Phase
 	array<Task_BuildParam>		queue_BuildParam		//	Stage Phase
 	array<Task_OrderedPatch>	queuePatchAllTasks		//	Patch Phase
 	array<TaskBuild_ItemData>	queueBuild_ItemData		//	Build Phase
@@ -611,7 +621,7 @@ void function RegistryPipelineInit() {
 	registry.queue_ReflectFunc.clear()		//	INFER
 	registry.queue_BindRPak.clear()			//	CACHE
 	registry.queue_BuildParam.clear()		//	STAGE
-//	registry.queue_JoinRPaks.clear()		//	STAGE
+	registry.queue_JoinRPaks.clear()		//	STAGE
 	registry.queuePatchAllTasks.clear()		//	PATCH
 	registry.queueBuild_ItemData.clear()	//	BUILD
 
@@ -803,20 +813,58 @@ void function Registry_InferFunction(
 void function Registry_InferRPakData(
 	string taskName, asset rpakPath, table overrides = {},
 ) {
-	//		Find parameter destination
+	//		Sanity checks
+	//	Error for unkown tasks
 	if (!(taskName in registry.taskCounter)) {
 		Logger_Warn("Attempted to bind data to unknown task", taskName)
 		return
 	}
 
-	//		Instantiate tasks
-	//	Instantiate and queue tasks for caching phase
+	//		Relational joins
+	//	Parse overrides for relational join
+	bool hasJoin
+	table joinTable
+	string childArg
+	foreach (string key, var val in overrides) {
+		if (typeof(val) != "table") { continue; }
+		hasJoin   = true
+		joinTable = expect table(val)
+		childArg  = key
+		break
+	}
+
+	string parentArg; asset parentRPak
+	if (hasJoin) {
+		foreach (var a, var t in joinTable) {
+			parentArg = expect string(a)
+			parentRPak = expect asset(t)
+			break
+		}
+	}
+
+	//		Instantiate and queue Task_BindRPak structs
+	//	Attach to every function
 	foreach (string currName in Registry_GetSubNames(taskName)) {
 		Task_BindRPak taskCache
 		taskCache.name		= currName
 		taskCache.rpakPath	= rpakPath
 		taskCache.overrides	= overrides
 		registry.queue_BindRPak.append(taskCache)
+
+		//	Skip early to avoid creating unnecessary join tasks
+		if (!hasJoin) { continue; }
+
+		//	Create and append join task
+		Task_JoinRPaks taskJoin
+		taskJoin.name		= currName
+
+		taskJoin.childRPak	= rpakPath
+		taskJoin.childArg	= childArg
+
+		taskJoin.parentRPak	= parentRPak
+		taskJoin.parentArg	= parentArg
+
+		registry.queue_JoinRPaks.append(taskJoin)
 	}
 }
 
@@ -952,9 +1000,10 @@ void function Registry_ApplyOverrides() {
 	foreach (Task_BindRPak task in registry.queue_BindRPak) {
 		//		Retrieve task-specific bindings
 		//	Can't operate on something that isn't indexed
-		if (!(task.name in registry.allBindings)) {
-			Logger_Fatal("Requested non-existent subtask", task.name)
-		}
+		array<ParamBinding> taskBindings
+		if (task.name in registry.allBindings) {
+			taskBindings = registry.allBindings[task.name]
+		} else { Logger_Fatal("Requested non-existent subtask", task.name); }
 
 		string taskName = Registry_GetTaskName(task.name)
 		if (!(taskName in validArgs)) {
@@ -975,8 +1024,6 @@ void function Registry_ApplyOverrides() {
 		//	2).	Apply overrides
 		//	Second block excerpt, allows for flexible overriding - type,
 		//	column, static values, etc. Essential for type compatibility
-		array<ParamBinding> taskBindings = registry.allBindings[task.name]
-
 		array<ParamBinding> fromTable = []
 		foreach (ParamBinding b in taskBindings) {
 			//	1). Retrieve parameter name from ParamBinding
@@ -1017,25 +1064,22 @@ void function Registry_ApplyOverrides() {
 					b.dataType = expect int(arr[1])
 				}
 			} else if (valType == "table") {
-				table joinTable = expect table(newVal)
-				foreach (string pArg, var pPak in joinTable) {
-					//	Ensure type compatibility
-					if (typeof(pPak) != "asset") {
-						Logger_Error("Passed rpakPath is of type {}", task.name, typeof(pPak))
-					}
+				b.dataSource = eParamSource.DATA_JOIN
+				fromTable.append(b)
 
-					// Task_JoinRPaks join
-					// join.name = task.name
-
-					// join.childRPak = task.rpakPath
-					// join.childBinding = b&
-
-					// join.parentRPak = expect asset(pPak)
-					// join.parentArg = pArg
-
-					// queue_JoinRPaks.append(join)
-					break;
+				//	Find the Task_JoinRPaks
+				Task_JoinRPaks join // TODO: Actually find this task.
+				foreach (Task_JoinRPaks j in registry.queue_JoinRPaks) {
+					if (j.name != task.name) { continue; }
+					join = j
+					break
 				}
+
+				//	3). Pass information to join task
+				//	Task-specific rpakBindings from child
+				join.joinedBindings = fromTable
+
+				continue
 			} else {
 				Logger_Debug("valType defaulted for {}", task.name, b.colName)
 				b.dataSource = eParamSource.STATIC_VAL
@@ -1064,20 +1108,49 @@ void function Registry_ApplyOverrides() {
 }
 
 void function Registry_ResolveJoins() {
-	// foreach (Task_JoinRPaks task in registry.queue_JoinRPaks) {
-	// 	array<ParamBindings> parentBindings = registry.rpakBindings[task.parentRPak]
-	// 	array<ParamBinding>	 joinBindings   = registry.rpakBindings[task.joinRPak]
+	foreach (Task_JoinRPaks task in registry.queue_JoinRPaks) {
+		//		Sanity checks
+		//	Ensure there are bindings for base & joined
+		array<ParamBinding> parentBindings
+		if (task.parentRPak in registry.rpakBindings) {
+			parentBindings = registry.rpakBindings[task.parentRPak]
+		} else {
+			Logger_Fatal("Attempted to retrieve bindings for unbound RPak '{}'", task.name, task.parentRPak);
+		}
 
-	// 	//	Scan the parent bindings to find the parent binding
+		//		Retrieve data
+		//	TODO: Need to throw an error if bindings are missing
+		//	TODO: This assumes bindings / structs are pass-by-reference
+		int parentIdx = -1
+		foreach (int i, ParamBinding b in parentBindings) {
+			if (b.argName != task.parentArg) { continue; }
+			parentIdx = i; break
+		}
 
-	// 	array<int> rowIndices
+		int childIdx = -1
+		foreach (int i, ParamBinding b in task.joinedBindings) {
+			if (b.argName != task.childArg) { continue; }
+			childIdx = i; break
+		}
 
-	// 	//	Apply indices
+		if (parentIdx == -1 || childIdx == -1) {
+			Logger_Error("Missing parent or child binding while resolving joins", task.name)
+			continue
+		}
 
-	// 	foreach (ParamBinding b in joinBindings) {
-	// 		b.rowIndices = rowIndices
-	// 	}
-	// }
+		//		Copy parent data to child
+		//	Child binding by default does not contain any information about the
+		//	RPak recieving the join, preventing the RPak from being cached and
+		//	thus causing an error when the row map is built.
+		task.parentBinding.colName    = parentBindings[parentIdx].colName
+		task.parentBinding.dataType   = parentBindings[parentIdx].dataType
+		task.parentBinding.dataSource = parentBindings[parentIdx].dataSource
+		task.parentBinding.value      = parentBindings[parentIdx].value
+
+		task.joinedBindings[childIdx].colName    = task.parentBinding.colName
+		task.joinedBindings[childIdx].dataType   = task.parentBinding.dataType
+		task.joinedBindings[childIdx].dataSource = task.parentBinding.dataSource
+	}
 }
 
 void function Registry_CacheRPaks() {
@@ -1114,13 +1187,13 @@ void function Registry_CacheRPaks() {
 		// Only the RPak-dependent bindings need to be fetched
 		// Deduplicate columns to prevent multiple access
 		table< string, array<int> > colsToFetch = {}
-		foreach ( ParamBinding b in bindings ) {
+		foreach (ParamBinding b in bindings) {
 			//	Skip already tracked columns
 			if (b.colName in colsToFetch) { continue; }
 			ArmoryLog_Iter(registry.logger, b.colName)
 
 			//	Fetch numeric index for column, throw error if not found
-			int colIdx = GetDataTableColumnByName( dt, b.colName )
+			int colIdx = GetDataTableColumnByName(dt, b.colName)
 			if (colIdx == -1) {
 				//Logger_Warn("Task '{}' requested {}#\"{}\" which does not exist", task.name, task.rpakPath, b.colName )
 				continue
@@ -1184,6 +1257,47 @@ void function Registry_CacheRPaks() {
 	}
 }
 
+//		Grab keys
+void function Registry_CompileJoins() {
+	foreach (Task_JoinRPaks task in registry.queue_JoinRPaks) {
+		//		Get step
+		//	Assuming here that information has been properly fetched and
+		//	validated. This is the first step in the pass. Maybe childBindings
+		//	needs to come from the Task_JoinRPaks - could grab the list from
+		//	the ApplyOverrides step?
+		int childIdx = -1
+		foreach (int i, ParamBinding b in task.joinedBindings) {
+			if (b.argName != task.childArg) { continue; }
+			childIdx = i; break
+		}
+
+		if (childIdx == -1) { continue; }
+
+		//	Unbox arrays
+		array parentArr = expect array(task.parentBinding.value)
+        array childArr  = expect array(task.joinedBindings[childIdx].value)
+
+		//		Build indices
+		//	Iterate over the parent binding's array and add the index to rowMap
+		//	this will produce negative indices if there is no match, which must
+		//	be handled in later stages of the pipeline
+		array<int> rowMap = []
+		foreach (var v in parentArr) {
+			int i = childArr.find(v)
+			rowMap.append(i)
+		}
+
+		//		Apply indices
+		//	joinedBindings only contains bindings under the task recieving the
+		//	join, rather than every binding for the RPak. This is enforced by
+		//	setting it inside ApplyOverrides
+		foreach (ParamBinding b in task.joinedBindings) {
+			b.dataSource = eParamSource.DATA_JOIN
+			b.rowMap = rowMap
+		}
+	}
+}
+
 //		Compile binding getter closures
 //	Binding closures cannot be finalized prior to overriding parameters in
 //	otherwise executing closures during PATCH / BUILD will throw type errors
@@ -1202,8 +1316,12 @@ void function Registry_CompileGetters() {
 				case eParamSource.DATATABLE:
 					b.Get = var function( int r ) : (b, task) {
 						if (b.value == null) { Logger_Fatal( "Argument '{}' has null value", task.name, b.colName ); }
-						int row = (b.rowMap.len() > 0) ? b.rowMap[r] : r
-						return (expect array(b.value))[row]
+						return (expect array(b.value))[r]
+					}; break;
+				case eParamSource.DATA_JOIN:
+					b.Get = var function( int r ) : (b, task) {
+						if (b.value == null) { Logger_Fatal( "Argument '{}' has null value", task.name, b.colName ); }
+						return (expect array(b.value))[b.rowMap[r]]
 					}; break;
 			}
 		}
@@ -1347,6 +1465,7 @@ void function Registry_PatchApply() {
 		array<ParamBinding> funcBindings = task.funcBindings
 
 		table< string, array > newOutputs = {}
+		table< string, array > newRowMaps = {}
 		foreach (ParamBinding b in taskBindings) {
 			if (b.dataSource == eParamSource.GENERATED && b.value == null && numRows > 0) {
 				b.value = []
@@ -1354,11 +1473,14 @@ void function Registry_PatchApply() {
 			}
 			if (task.taskType == eTaskType.GENERATOR) {
 				newOutputs[b.argName] <- []
+				if (b.rowMap.len() == 0) { continue; }
+				newRowMaps[b.argName] <- []
 			}
 		}
 
 		//		Execution loop
 		//	Generators with 0 rows execute exactly once. Otherwise, execute per row.
+		int writeIdx = 0
 		int loopCount = (numRows == 0) ? 1 : numRows
 		for (int r = 0; r < loopCount; r++) {
 			array args = [ getroottable() ]
@@ -1372,7 +1494,7 @@ void function Registry_PatchApply() {
 					if (typeof(val) == "string" && expect string(val) == "PIPELINE_SKIP") { skipRow = true; break; }
 					args.append(val)
 				}
-				if (skipRow) { continue }
+				if (skipRow) { continue; }
 			}
 
 			//	Execute shared function call
@@ -1408,6 +1530,8 @@ void function Registry_PatchApply() {
 						foreach (ParamBinding b in taskBindings) {
 							var val = (b.argName in resTable) ? resTable[b.argName] : (numRows > 0 ? b.Get(r) : null)
 							newOutputs[b.argName].append(val)
+							if (b.rowMap.len() == 0) { continue; }
+							newRowMaps[b.argName].append(b.rowMap[r]);
 						}
 					}
 
