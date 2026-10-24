@@ -575,12 +575,12 @@ struct {
 //	array< void functionref() > cb_OnRegistryInit
 
 	/// === QUEUES ============================================================
-	array<Task_ReflectFunc>		queue_ReflectFunc		//	Infer Phase
-	array<Task_BindRPak>		queue_BindRPak			//	Cache Phase
-	array<Task_JoinRPaks>		queue_JoinRPaks			//	Stage Phase
-	array<Task_BuildParam>		queue_BuildParam		//	Stage Phase
-	array<Task_OrderedPatch>	queuePatchAllTasks		//	Patch Phase
-	array<TaskBuild_ItemData>	queueBuild_ItemData		//	Build Phase
+	array<Task_ReflectFunc>			queue_ReflectFunc		//	Infer Phase
+	array<Task_BindRPak>			queue_BindRPak			//	Cache Phase
+	table<string, Task_JoinRPaks>	queue_JoinRPaks			//	Stage Phase
+	array<Task_BuildParam>			queue_BuildParam		//	Stage Phase
+	array<Task_OrderedPatch>		queuePatchAllTasks		//	Patch Phase
+	array<TaskBuild_ItemData>		queueBuild_ItemData		//	Build Phase
 
 	/// === BINDINGS ==========================================================
 	//	Appends nubmers to name to prevent collisions from multiple calls
@@ -864,7 +864,7 @@ void function Registry_InferRPakData(
 		taskJoin.parentRPak	= parentRPak
 		taskJoin.parentArg	= parentArg
 
-		registry.queue_JoinRPaks.append(taskJoin)
+		registry.queue_JoinRPaks[currName] <- taskJoin
 	}
 }
 
@@ -991,9 +991,12 @@ void function Registry_ApplyOverrides() {
 
 		//	Insert/assign to the same argname is safe
 		foreach (ParamBinding b in bindings) {
+			ArmoryLog_Iter(registry.logger, b.argName)
 			validArgs[taskName][b.argName] <- b
 			if (b.colName != "") { validCols[taskName][b.colName] <- b; }
 		}
+
+		Logger_Info("Validated bindings: [%I{, }]", subName)
 	}
 
 	//		Process overrides, link bindings
@@ -1024,6 +1027,7 @@ void function Registry_ApplyOverrides() {
 		//	2).	Apply overrides
 		//	Second block excerpt, allows for flexible overriding - type,
 		//	column, static values, etc. Essential for type compatibility
+		bool tableJoin = false
 		array<ParamBinding> fromTable = []
 		foreach (ParamBinding b in taskBindings) {
 			//	1). Retrieve parameter name from ParamBinding
@@ -1064,16 +1068,14 @@ void function Registry_ApplyOverrides() {
 					b.dataType = expect int(arr[1])
 				}
 			} else if (valType == "table") {
+				Logger_Info("Table argument found for {}", task.name, task.rpakPath)
+				tableJoin = true
+
 				b.dataSource = eParamSource.DATA_JOIN
 				fromTable.append(b)
 
 				//	Find the Task_JoinRPaks
-				Task_JoinRPaks join // TODO: Actually find this task.
-				foreach (Task_JoinRPaks j in registry.queue_JoinRPaks) {
-					if (j.name != task.name) { continue; }
-					join = j
-					break
-				}
+				Task_JoinRPaks join = registry.queue_JoinRPaks[task.name]
 
 				//	3). Pass information to join task
 				//	Task-specific rpakBindings from child
@@ -1108,7 +1110,7 @@ void function Registry_ApplyOverrides() {
 }
 
 void function Registry_ResolveJoins() {
-	foreach (Task_JoinRPaks task in registry.queue_JoinRPaks) {
+	foreach (string _, Task_JoinRPaks task in registry.queue_JoinRPaks) {
 		//		Sanity checks
 		//	Ensure there are bindings for base & joined
 		array<ParamBinding> parentBindings
@@ -1259,7 +1261,9 @@ void function Registry_CacheRPaks() {
 
 //		Grab keys
 void function Registry_CompileJoins() {
-	foreach (Task_JoinRPaks task in registry.queue_JoinRPaks) {
+	foreach (string _, Task_JoinRPaks task in registry.queue_JoinRPaks) {
+		Logger_Info("Joining {}#'{}' to {}#'{}'", task.name, task.childRPak, task.childArg, task.parentRPak, task.parentArg)
+
 		//		Get step
 		//	Assuming here that information has been properly fetched and
 		//	validated. This is the first step in the pass. Maybe childBindings
@@ -1272,20 +1276,26 @@ void function Registry_CompileJoins() {
 		}
 
 		if (childIdx == -1) { continue; }
+		array childArr = expect array(task.joinedBindings[childIdx].value)
 
-		//	Unbox arrays
-		array parentArr = expect array(task.parentBinding.value)
-        array childArr  = expect array(task.joinedBindings[childIdx].value)
+		//	Parent binding's array reference is overwritten in the cache step,
+		//	fetch the data directly from the cache using the task's information
+		RPakData parentRPak = registry.cache[task.parentRPak]
+		array parentArr = parentRPak.data[task.parentBinding.colName]
 
 		//		Build indices
 		//	Iterate over the parent binding's array and add the index to rowMap
 		//	this will produce negative indices if there is no match, which must
 		//	be handled in later stages of the pipeline
 		array<int> rowMap = []
-		foreach (var v in parentArr) {
-			int i = childArr.find(v)
+		foreach (var v in childArr) {
+			int i = parentArr.find(v)
 			rowMap.append(i)
+
+			ArmoryLog_Iter(registry.logger, string(i))
 		}
+
+		Logger_Info("Compiled join, map: [%I{, }]", task.name)
 
 		//		Apply indices
 		//	joinedBindings only contains bindings under the task recieving the
@@ -1321,7 +1331,8 @@ void function Registry_CompileGetters() {
 				case eParamSource.DATA_JOIN:
 					b.Get = var function( int r ) : (b, task) {
 						if (b.value == null) { Logger_Fatal( "Argument '{}' has null value", task.name, b.colName ); }
-						return (expect array(b.value))[b.rowMap[r]]
+						int row = b.rowMap[r];
+						return (row == -1) ? "PIPELINE_SKIP" :(expect array(b.value))[row]
 					}; break;
 			}
 		}
@@ -1609,6 +1620,9 @@ void function Registry_ExecutePipeline() {
 	//	2).	Apply overrides to function parameters
 	Registry_ApplyOverrides()
 
+	//	3). Resolve relational joins
+	Registry_ResolveJoins()
+
 	///////	CACHE
 	//	1).	Query RPak files and cache to registry
 	registry.phase++
@@ -1619,6 +1633,7 @@ void function Registry_ExecutePipeline() {
 
 	///////	STAGE: Bake parameter getter closures after override resolution
 	registry.phase++
+	Registry_CompileJoins()
 	Registry_CompileGetters()				//
 
 	//	Clear queue
@@ -1793,45 +1808,48 @@ void function RegistryInitItems() {
 	Registry_InferRPakData( "v_titan_abilities", $"datatable/titan_abilities.rpak", { cost=0 })
 
 	///	===========	TITAN LOADOUT DATA ////	GOOD ==============================
-	var FilterDisabledTitanRef = ArmoryUtils_ClosureBox(table function( string titanRef ) {
-		return { titanRef = IsDisabledRef(titanRef) ? "PIPELINE_SKIP" : titanRef }
-	})
+	// var FilterDisabledTitanRef = ArmoryUtils_ClosureBox(table function( string titanRef ) {
+	// 	return { titanRef = IsDisabledRef(titanRef) ? "PIPELINE_SKIP" : titanRef }
+	// })
 
-	//	Note: `setFile` and `primeSetFile` are not in titans_mp.rpak
-	var PrecacheTitanModels = ArmoryUtils_ClosureBox(table function( string setFile, string primeSetFile ) {
-		#if SERVER || CLIENT
-		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
-		PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
-		if ( primeSetFile != "" ) {
-			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
-			PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
-		}
-		#endif
-		return {}
-	})
+	// //	Note: `setFile` and `primeSetFile` are not in titans_mp.rpak
+	// var PrecacheTitanModels = ArmoryUtils_ClosureBox(table function( string titanRef, string setFile, string primeSetFile ) {
+	// 	#if SERVER || CLIENT
+	// 	PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "bodymodel" ) )
+	// 	PrecacheModel( GetPlayerSettingsAssetForClassName( setFile, "armsmodel" ) )
+	// 	if ( primeSetFile != "" ) {
+	// 		PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "bodymodel" ) )
+	// 		PrecacheModel( GetPlayerSettingsAssetForClassName( primeSetFile, "armsmodel" ) )
+	// 	}
+	// 	#endif
+	// 	return {}
+	// })
 
-	var BuildTitanPassives = ArmoryUtils_ClosureBox(void function( string titanRef, string setFile ) {
-		table< int, bool > cache
-		for (int i = 1; i <= 6; i++) {
-			int passiveType = GetTitanLoadoutPropertyPassiveType(setFile, "passive" + i)
-			if (passiveType in cache) { continue; }
-			cache[passiveType] <- true
+	// var BuildTitanPassives = ArmoryUtils_ClosureBox(void function( string titanRef, string setFile ) {
+	// 	table< int, bool > cache
+	// 	for (int i = 1; i <= 6; i++) {
+	// 		int passiveType = GetTitanLoadoutPropertyPassiveType(setFile, "passive" + i)
+	// 		if (passiveType in cache) { continue; }
+	// 		cache[passiveType] <- true
 
-			array<ItemData> items = GetAllItemsOfType( passiveType )
-			foreach (item in items) {
-				CreateGenericSubItemData( passiveType, titanRef, item.ref, GetItemCost( item.ref ) )
-			}
-		}
-	})
+	// 		array<ItemData> items = GetAllItemsOfType( passiveType )
+	// 		foreach (item in items) {
+	// 			CreateGenericSubItemData( passiveType, titanRef, item.ref, GetItemCost( item.ref ) )
+	// 		}
+	// 	}
+	// })
 
-	//	Titans themselves -----	GOOD
-	Registry_InferFunction(ArmoryUtils_ClosureBox(CreateTitanData), eTaskType.FACTORY, "v_titans_mp")
-	Registry_InferFunction(FilterDisabledTitanRef, eTaskType.MUTATOR, "v_titans_mp")
+	// //	Titans themselves -----	GOOD
+	// Registry_InferFunction(ArmoryUtils_ClosureBox(CreateTitanData), eTaskType.FACTORY, "v_titans_mp")
+	// Registry_InferFunction(FilterDisabledTitanRef, eTaskType.MUTATOR, "v_titans_mp")
+	// Registry_InferRPakData("v_titans_mp", $"datatable/titans_mp.rpak", { coreIcon = ["coreIcon", eColType.ASSET] })
 
-	Registry_InferRPakData("v_titans_mp", $"datatable/titans_mp.rpak", { coreIcon = ["coreIcon", eColType.ASSET] })
+	// //	This requires titan_properties.rpak
+	// Registry_InferFunction(PrecacheTitanModels, eTaskType.MUTATOR, "v_titans_mp" )
+	// Registry_InferRPakData("v_titans_mp", $"datatable/titan_properties.rpak", {
+	// 	titanRef = { titanRef = $"datatable/titans_mp.rpak" }
+	// })
 
-	//Registry_InferFunction(PrecacheTitanModels, eTaskType.MUTATOR, "v_titans_mp" )
-	//Registry_InferRPakData("v_titans_mp", $"datatable/titan_properties.rpak" )
 
 	//	Passives ----- ISSUE
 	//	Row mismatch between titans_mp & titan_properties. Fix: allow mutators
@@ -2523,14 +2541,14 @@ void function InitItems()
 	numRows = GetDatatableRowCount( titansMpDataTable )
 	for ( int i = 0; i < numRows; i++ ) {
 		string titanRef = GetDataTableString( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "titanRef" ) )
-		// int cost = GetDataTableInt( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "cost" ) )
-		// asset image = GetDataTableAsset( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "image" ) )
-		// asset coreIcon = GetDataTableAsset( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "coreIcon" ) )
+		int cost = GetDataTableInt( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "cost" ) )
+		asset image = GetDataTableAsset( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "image" ) )
+		asset coreIcon = GetDataTableAsset( titansMpDataTable, i, GetDataTableColumnByName( titansMpDataTable, "coreIcon" ) )
 
 		if ( IsDisabledRef( titanRef ) )
 			continue
 
-		// CreateTitanData( i, titanRef, cost, image, coreIcon )
+		CreateTitanData( i, titanRef, cost, image, coreIcon )
 
 		ItemData itemData = GetItemData( titanRef )
 		int passive1Type = expect int( itemData.i.passive1Type )
