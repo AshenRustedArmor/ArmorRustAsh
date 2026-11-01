@@ -417,6 +417,81 @@ struct
 	array<void functionref()> itemRegistrationCallbacks
 } file
 
+/// ╔════════════════════════════════════════════════════════════════════════════════════════════════╗
+/// ║                                                                                                ║
+/// ║  ███████████   ██████████   █████████  █████  █████████  ███████████ ███████████   █████ █████ ║
+/// ║ ░░███░░░░░███ ░░███░░░░░█  ███░░░░░███░░███  ███░░░░░███░█░░░███░░░█░░███░░░░░███ ░░███ ░░███  ║
+/// ║  ░███    ░███  ░███  █ ░  ███     ░░░  ░███ ░███    ░░░ ░   ░███  ░  ░███    ░███  ░░███ ███   ║
+/// ║  ░██████████   ░██████   ░███          ░███ ░░█████████     ░███     ░██████████    ░░█████    ║
+/// ║  ░███░░░░░███  ░███░░█   ░███    █████ ░███  ░░░░░░░░███    ░███     ░███░░░░░███    ░░███     ║
+/// ║  ░███    ░███  ░███ ░   █░░███  ░░███  ░███  ███    ░███    ░███     ░███    ░███     ░███     ║
+/// ║  █████   █████ ██████████ ░░█████████  █████░░█████████     █████    █████   █████    █████    ║
+/// ║ ░░░░░   ░░░░░ ░░░░░░░░░░   ░░░░░░░░░  ░░░░░  ░░░░░░░░░     ░░░░░    ░░░░░   ░░░░░    ░░░░░     ║
+/// ║                                                                                                ║
+/// ╚════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+///	===========================================================================
+///							Data Storage + Handling
+///	===========================================================================
+//		Options for data retrieval
+//	Maps to GetDataTable[Type] functions, allowing typed retrieval
+enum eColType { NULL, BOOL, INT, FLOAT, VECTOR, STRING, ASSET, ITYPE }
+array<string> eColTypes = ["NULL", "BOOL", "INT", "FLOAT", "VECTOR", "STRING", "ASSET", "ITYPE"]
+
+//		Data storage
+//	L1: RPak Data
+//	Maps datatable column ("col") to arrays of values ("val")
+//	Maps datatable column ("col") to data type info ("type")
+//table< asset, CachedRPak > cachedRPaks
+struct CachedRPak {
+	int rows
+
+	table< string, int >		typeByCol
+	table< string, array<var> >	dataByCol
+}
+
+//table< asset, table<string, ColRequest> > colRequests
+struct ColRequest {
+	string	col
+	int		type
+}
+
+//	L2: Records - see C:DDA 'generic_factory.h'
+struct Link {
+	string	col
+	asset	tgtSet
+	string	tgtCol
+}
+
+//	Maps item identity ("ref") to pre-indexed data (a row in a "set").
+//	Are records a "set", or do they CONTAIN "sets" indexed by ref?
+//table< asset, RecordSet > sets
+struct RecordSet {
+	asset	source		//	Originating datatable
+	string	refCol		//	Defines which column identifies the ref
+	int		version		//	Versioning info for patch application
+
+	array<string> refs	//	Deterministic order, not identity
+
+	table<string, table<string, var> >	recordByRef		//	ref -> { col -> val }
+	table<string, string>				invalidByRef	//	quarantined refs -> reason
+	table<string, table>				refsByVal		//	lazy index: col -> { value -> array<ref> }
+
+	table<string, string> origin						//	ref -> "vanilla" | owner
+	array<Link> links
+}
+
+//	L3: Workgroups
+//	Identifies which property determines item identity ("ref").
+//	Stores all of the tasks operating on a workgroup.
+//	Maps task parameters ("arg") to pre-indexed data
+struct RegistryGroup {
+	string name
+	asset domain
+
+}
+
+
 /// ╔══════════════════════════════════════════════════════════════════════════════════╗
 /// ║                                                                                  ║
 /// ║    █████████  █████  █████  █████████  ███████████    ███████    ██████   ██████ ║
@@ -437,14 +512,6 @@ Match:		const string (BIND|CCH|MUT|BAKE)_LOG(.*?\s\|\s Log:\[\{}\])
 Replace:	const string $1_INFO
 */
 
-///	===========================================================================
-///							Data Storage + Handling
-///	===========================================================================
-//		Options for data retrieval
-//	Maps to GetDataTable[Type] functions, allowing typed retrieval
-enum eColType { NULL, BOOL, INT, FLOAT, VECTOR, STRING, ASSET, ITYPE }
-array<string> strColTypes = ["NULL", "BOOL", "INT", "FLOAT", "VECTOR", "STRING", "ASSET", "ITYPE"]
-
 //	Declares where data comes from, allowing pregeneration of getters
 enum eParamSource { ROW_INDEX, STATIC_VAL, DATATABLE, DATA_JOIN, GENERATED }
 
@@ -463,11 +530,6 @@ struct ParamBinding {
 	//	Value retrieval
 	array<int> rowMap = []
 	var functionref( int ) Get = null			//	Getter assigned in ProcessBake
-}
-
-//
-struct ParamSource {
-	string colName
 }
 
 //		Cached data
@@ -1222,7 +1284,7 @@ void function Registry_CacheRPaks() {
 
 			//	Fill the array<var> inside the RPakData. Ideally done with a
 			//	lambda to prevent having to switch on the enum every time.
-			Logger_Debug("{}#{} (index {}) of type {}", task.name, task.rpakPath, colName, colIdx, strColTypes[idxAndType[1]])
+			Logger_Debug("{}#{} (index {}) of type {}", task.name, task.rpakPath, colName, colIdx, eColTypes[idxAndType[1]])
 
 			var functionref( int ) DataTableGet = null
 			switch( idxAndType[1] ) {
