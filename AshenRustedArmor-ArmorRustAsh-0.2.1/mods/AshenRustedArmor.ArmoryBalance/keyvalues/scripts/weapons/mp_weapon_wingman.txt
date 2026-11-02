@@ -34,8 +34,8 @@ WeaponData
 
 	//		Spread
 	//	Standing
-	"spread_stand_hip"								"2.0"	//"4.6"	//"1.0"
-	"spread_stand_ads"								"2.3"	//"5.2"	//"0.05"
+	"spread_stand_hip"								"1.0"	//"4.6"	//"1.0"
+	"spread_stand_ads"								"1.2"	//"5.2"	//"0.05"
 
 	"spread_kick_on_fire_stand_hip"   				"0.8"	//"2.5"
 	"spread_max_kick_stand_hip"   					"2.0"	//"4.5"
@@ -44,12 +44,12 @@ WeaponData
 	"spread_max_kick_stand_ads"   					"4.0"	//"0.0"
 	
 	//	Standing - penalties
-	"spread_stand_hip_run"							"2.3"	//"5.2"	//"3.0"
-	"spread_stand_hip_sprint"                       "2.3"	//"5.2"	//"4.0"
+	"spread_stand_hip_run"							"1.2"	//"5.2"	//"3.0"
+	"spread_stand_hip_sprint"                       "1.2"	//"5.2"	//"4.0"
 	
 	//	Crouching
-	"spread_crouch_hip"   							"2.0"	//"4.6"	//"0.5"
-	"spread_crouch_ads"   							"2.3"	//"5.2"	//"0.0"
+	"spread_crouch_hip"   							"1.0"	//"4.6"	//"0.5"
+	"spread_crouch_ads"   							"1.2"	//"5.2"	//"0.0"
 
 	"spread_kick_on_fire_crouch_hip"  				"0.8"	//"2.0"
 	"spread_max_kick_crouch_hip"   					"2.0"	//"3.0"
@@ -58,8 +58,8 @@ WeaponData
 	"spread_max_kick_crouch_ads"   					"4.0"	//"0.0"
 
 	//	Airborne
-	"spread_air_hip"  								"2.3"	//"4.6"	//"6.0"
-	"spread_air_ads"  								"2.3"	//"5.2"	//"0.15"
+	"spread_air_hip"  								"1.2"	//"4.6"	//"6.0"
+	"spread_air_ads"  								"1.2"	//"5.2"	//"0.15"
 
 	"spread_kick_on_fire_air_hip" 					"0.8"	//"3.0"
 	"spread_max_kick_air_hip"   					"2.0"	//"4.5"
