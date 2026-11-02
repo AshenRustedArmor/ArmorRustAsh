@@ -30,38 +30,38 @@ WeaponData
 
 	//		Spread
 	//	Standing
-	"spread_stand_hip"								"1.0"	//"0.0"
-	"spread_stand_ads"								"0.8"	//"0.0"
+	"spread_stand_hip"								"1.2"	//"0.0"
+	"spread_stand_ads"								"0.9"	//"0.0"
 
-	"spread_kick_on_fire_stand_hip"   				"0.01"	//"0.0"
-	"spread_max_kick_stand_hip"   					"0.01"	//"0.0"
+	"spread_kick_on_fire_stand_hip"   				"0.0"
+	"spread_max_kick_stand_hip"   					"0.0"
 
-	"spread_kick_on_fire_stand_ads"   				"0.01"	//"0.0"
-	"spread_max_kick_stand_ads"   					"0.01"	//"0.0"
+	"spread_kick_on_fire_stand_ads"   				"0.0"
+	"spread_max_kick_stand_ads"   					"0.0"
 	
 	//	Standing - penalties
-	"spread_stand_hip_run"							"1.0"	//"0.0"
-	"spread_stand_hip_sprint"                       "1.0"	//"0.0"
+	"spread_stand_hip_run"							"1.2"	//"0.0"
+	"spread_stand_hip_sprint"                       "1.2"	//"0.0"
 	
 	//	Crouching
-	"spread_crouch_hip"   							"1.0"	//"0.0"
-	"spread_crouch_ads"   							"0.8"	//"0.0"
+	"spread_crouch_hip"   							"1.2"	//"0.0"
+	"spread_crouch_ads"   							"0.9"	//"0.0"
 
-	"spread_kick_on_fire_crouch_hip"  				"0.01"	//"0.0"
-	"spread_max_kick_crouch_hip"   					"0.01"	//"0.0"
+	"spread_kick_on_fire_crouch_hip"  				"0.0"
+	"spread_max_kick_crouch_hip"   					"0.0"
 
-	"spread_kick_on_fire_crouch_ads"  				"0.01"	//"0.0"
-	"spread_max_kick_crouch_ads"   					"0.01"	//"0.0"
+	"spread_kick_on_fire_crouch_ads"  				"0.0"
+	"spread_max_kick_crouch_ads"   					"0.0"
 
 	//	Airborne
-	"spread_air_hip"  								"1.0"	//"1.5"
-	"spread_air_ads"  								"0.8"	//"0.0"
+	"spread_air_hip"  								"1.2"	//"1.5"
+	"spread_air_ads"  								"0.9"	//"0.0"
 
-	"spread_kick_on_fire_air_hip" 					"0.01"	//"0.0"
-	"spread_max_kick_air_hip"   					"0.01"	//"0.0"
+	"spread_kick_on_fire_air_hip" 					"0.0"
+	"spread_max_kick_air_hip"   					"0.0"
 
-	"spread_kick_on_fire_air_ads" 					"0.01"	//"0.0"
-	"spread_max_kick_air_ads"   					"0.01"	//"0.0"
+	"spread_kick_on_fire_air_ads" 					"0.0"
+	"spread_max_kick_air_ads"   					"0.0"
 
 	//	Decay/delay
 	"spread_decay_rate"   							"25.0"	//"30.0"
