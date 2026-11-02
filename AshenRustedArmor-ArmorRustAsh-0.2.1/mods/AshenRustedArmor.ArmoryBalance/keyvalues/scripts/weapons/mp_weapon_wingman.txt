@@ -8,8 +8,8 @@
  
 WeaponData
 {
-	"OnWeaponPrimaryAttack"							"OnWeaponPrimaryAttack_weapon_shotgun"
-	"OnWeaponNpcPrimaryAttack"						"OnWeaponNpcPrimaryAttack_weapon_shotgun"
+	"OnWeaponPrimaryAttack"							"OnWeaponPrimaryAttack_weapon_wingman"
+	"OnWeaponNpcPrimaryAttack"						"OnWeaponNpcPrimaryAttack_weapon_wingman"
 
 	//		Effects
 	//	Tracer & trail fx

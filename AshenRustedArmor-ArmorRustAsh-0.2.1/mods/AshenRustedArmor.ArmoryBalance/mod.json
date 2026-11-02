@@ -23,6 +23,10 @@
 			"Path": "weapons/_thermite.nut",
 			"RunOn": "( CLIENT || SERVER ) && MP"
 		},
+		{
+			"Path": "weapons/mp_weapon_wingman.nut",
+			"RunOn": "( CLIENT || SERVER ) && MP"
+		}
 //		{
 //			"Path": "weapons/_wave.nut",
 //			"RunOn": "( CLIENT || SERVER ) && MP"
